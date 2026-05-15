@@ -23,6 +23,24 @@
   a `createdAt` timestamp were defaulting to the current date, inflating
   Today's spend. Now skipped at both the SQL and application level.
 
+## 0.9.9 - 2026-05-15
+
+### Fixed (CLI)
+- **Reduced Claude parser OOM risk.** Large Claude JSONL sessions retained
+  full entry objects (text, thinking blocks, tool results) in memory during
+  parsing, causing V8 heap exhaustion on heavy usage months. Entries are now
+  compacted immediately after JSON.parse, keeping only the fields needed for
+  cost/token aggregation. This is a mitigation - very heavy users may still
+  need the streaming parser refactor planned next.
+- **Redundant `hydrateCache()` in status commands.** The `status --format json`
+  and terminal `status` paths hydrated the daily cache before calling
+  `parseAllSessions` directly, doubling memory pressure for no benefit.
+  Removed. The menubar-json path still hydrates as needed.
+- **Session cache retained between status parses.** The `status --format json`
+  path parsed today and month ranges without clearing the in-process session
+  cache between them, keeping both result sets pinned. Cache is now cleared
+  after each period is consumed.
+
 ## 0.9.8 - 2026-05-10
 
 ### Added (CLI)

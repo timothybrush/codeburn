@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { installMenubarApp } from './menubar-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { loadPricing, setModelAliases } from './models.js'
-import { parseAllSessions, filterProjectsByName } from './parser.js'
+import { parseAllSessions, filterProjectsByName, clearSessionCache } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { type PeriodData, type ProviderCost } from './menubar-json.js'
@@ -529,9 +529,12 @@ program
     }
 
     if (opts.format === 'json') {
-      await hydrateCache()
-      const todayData = buildPeriodData('today', fp(await parseAllSessions(getDateRange('today').range, pf)))
-      const monthData = buildPeriodData('month', fp(await parseAllSessions(getDateRange('month').range, pf)))
+      const todayProjects = fp(await parseAllSessions(getDateRange('today').range, pf))
+      const todayData = buildPeriodData('today', todayProjects)
+      clearSessionCache()
+      const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
+      const monthData = buildPeriodData('month', monthProjects)
+      clearSessionCache()
       const { code, rate } = getCurrency()
       const payload: {
         currency: string
@@ -551,9 +554,9 @@ program
       return
     }
 
-    await hydrateCache()
-    const monthProjects = fp(await parseAllSessions(getDateRange('month').range, pf))
-    console.log(renderStatusBar(monthProjects))
+    const monthProjects2 = fp(await parseAllSessions(getDateRange('month').range, pf))
+    clearSessionCache()
+    console.log(renderStatusBar(monthProjects2))
   })
 
 program
