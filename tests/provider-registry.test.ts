@@ -3,7 +3,7 @@ import { providers, getAllProviders } from '../src/providers/index.js'
 
 describe('provider registry', () => {
   it('has core providers registered synchronously', () => {
-    expect(providers.map(p => p.name)).toEqual(['claude', 'cline', 'codex', 'copilot', 'droid', 'gemini', 'ibm-bob', 'kilo-code', 'kiro', 'kimi', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
+    expect(providers.map(p => p.name)).toEqual(['claude', 'cline', 'codex', 'copilot', 'droid', 'gemini', 'ibm-bob', 'kilo-code', 'kiro', 'kimi', 'mistral-vibe', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
   })
 
   it('includes sqlite providers after async load', async () => {

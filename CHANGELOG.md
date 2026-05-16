@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added (CLI)
+- **Mistral Vibe provider.** CodeBurn now reads Mistral Vibe session folders
+  from `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`, using
+  `meta.json` for cumulative prompt/completion tokens, model pricing, and
+  timestamps, and `messages.jsonl` for user prompts and tool calls. Subagent
+  sessions under a parent session's `agents/` folder are tracked separately.
+  Closes #283.
 - **Kimi Code CLI provider.** CodeBurn now reads Kimi session usage from
   `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent
   `wire.jsonl` files. The parser consumes Kimi's official `StatusUpdate`
