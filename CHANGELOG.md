@@ -32,6 +32,10 @@
   `<server>_<tool>` names, which the shared MCP pipeline did not recognize.
   The provider now normalizes these to the canonical `mcp__<server>__<tool>`
   form so MCP breakdowns and `optimize` work correctly. Closes #308.
+- **Antigravity Windows language-server discovery.** Antigravity detection now
+  supports Windows process discovery, `--extension_server_port`,
+  `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped and
+  unwrapped Connect-RPC response shapes. Closes #249.
 - **Mangled project names in dashboard.** The By Project and Top Sessions
   panels decoded slugs by splitting on `-`, which broke directory names
   containing dashes or dots (e.g. `my-project` rendered as `my/project`).
