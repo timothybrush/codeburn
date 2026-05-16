@@ -1,8 +1,10 @@
 import { claude } from './claude.js'
+import { cline } from './cline.js'
 import { codex } from './codex.js'
 import { copilot } from './copilot.js'
 import { droid } from './droid.js'
 import { gemini } from './gemini.js'
+import { ibmBob } from './ibm-bob.js'
 import { kiloCode } from './kilo-code.js'
 import { kiro } from './kiro.js'
 import { kimi } from './kimi.js'
@@ -102,7 +104,7 @@ async function loadCrush(): Promise<Provider | null> {
   }
 }
 
-const coreProviders: Provider[] = [claude, codex, copilot, droid, gemini, kiloCode, kiro, openclaw, pi, omp, qwen, kimi, rooCode]
+const coreProviders: Provider[] = [claude, cline, codex, copilot, droid, gemini, ibmBob, kiloCode, kiro, kimi, openclaw, pi, omp, qwen, rooCode]
 
 export async function getAllProviders(): Promise<Provider[]> {
   const [ag, gs, cursor, opencode, cursorAgent, crush] = await Promise.all([loadAntigravity(), loadGoose(), loadCursor(), loadOpenCode(), loadCursorAgent(), loadCrush()])
