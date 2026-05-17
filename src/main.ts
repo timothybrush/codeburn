@@ -602,8 +602,7 @@ program
         }
         dailyHistory = historyFromCache
       } else {
-        const fallbackDays = aggregateProjectsIntoDays(scanProjects)
-        dailyHistory = fallbackDays.map(d => {
+        const histFromCache = allCacheDays.map(d => {
           const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
           return {
             date: d.date,
@@ -616,6 +615,21 @@ program
             topModels: [] as { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }[],
           }
         })
+        const fallbackDays = aggregateProjectsIntoDays(scanProjects)
+        const liveDays = fallbackDays.map(d => {
+          const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
+          return {
+            date: d.date,
+            cost: prov.cost,
+            calls: prov.calls,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            topModels: [] as { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }[],
+          }
+        })
+        dailyHistory = [...histFromCache, ...liveDays]
       }
 
       const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange)
