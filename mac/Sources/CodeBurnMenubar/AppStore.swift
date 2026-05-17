@@ -407,14 +407,12 @@ final class AppStore {
     /// User-initiated. Reads Claude's source (this is what triggers the macOS keychain
     func activateClaudeFromDormant() async {
         guard case .dormant = subscriptionLoadState else { return }
-        subscriptionLoadState = .loading
-        _ = await refreshSubscriptionReportingSuccess()
+        await bootstrapSubscription()
     }
 
     func activateCodexFromDormant() async {
         guard case .dormant = codexLoadState else { return }
-        codexLoadState = .loading
-        _ = await refreshCodexReportingSuccess()
+        await bootstrapCodex()
     }
 
     func bootstrapSubscription() async {
