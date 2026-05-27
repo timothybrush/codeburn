@@ -24,7 +24,7 @@ Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads sessi
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/dashboard.jpg" alt="CodeBurn TUI dashboard" width="440" /></td>
-<td><img src="https://cdn.jsdelivr.net/gh/getagentseal/codeburn@main/assets/menubar-0.8.0.png" alt="CodeBurn macOS menubar" width="440" /></td>
+<td><img src="https://raw.githubusercontent.com/getagentseal/codeburn/main/assets/menubar-0.9.11.png" alt="CodeBurn macOS menubar" width="440" /></td>
 </tr>
 <tr>
 <td align="center"><strong>Optimize</strong></td>
