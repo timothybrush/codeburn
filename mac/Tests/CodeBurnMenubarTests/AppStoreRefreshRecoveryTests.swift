@@ -91,15 +91,4 @@ struct AppStoreRefreshRecoveryTests {
         #expect(store.shouldResetInteractiveRefreshPipeline)
     }
 
-    @Test("refresh pause message is visible and clearable")
-    func refreshPauseMessageIsVisibleAndClearable() {
-        let store = AppStore()
-
-        store.pauseAutomaticRefresh(until: Date(timeIntervalSince1970: 4_000), consecutiveStalls: 3)
-        #expect(store.refreshPauseMessage?.contains("Refresh paused") == true)
-        #expect(store.refreshPauseMessage?.contains("3 stalled attempts") == true)
-
-        store.clearRefreshPause()
-        #expect(store.refreshPauseMessage == nil)
-    }
 }

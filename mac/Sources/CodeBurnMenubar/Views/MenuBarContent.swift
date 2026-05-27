@@ -60,16 +60,17 @@ struct MenuBarContent: View {
                         BurnLoadingOverlay(periodLabel: store.selectionLabel)
                             .transition(.opacity)
                             .task {
-                                // Keep retrying until data loads or the view is removed.
-                                // The original one-shot recovery silently gave up if the
-                                // first attempt also stalled (generation mismatch, CLI
-                                // timeout, day rollover race). Looping guarantees the
-                                // user never sees a permanent spinner.
-                                while !Task.isCancelled {
-                                    try? await Task.sleep(for: .seconds(8))
+                                var delay: Duration = .seconds(8)
+                                let maxDelay: Duration = .seconds(60)
+                                let maxAttempts = 6
+                                for attempt in 1...maxAttempts {
+                                    try? await Task.sleep(for: delay)
                                     guard !Task.isCancelled, !store.hasCachedData else { return }
                                     await store.recoverFromStuckLoading()
+                                    if attempt < maxAttempts { delay = min(delay * 2, maxDelay) }
                                 }
+                                guard !Task.isCancelled, !store.hasCachedData else { return }
+                                store.setRecoveryExhausted(for: store.selectionLabel)
                             }
                     }
                 }

@@ -40,7 +40,7 @@ final class AppStore {
     var selectedDays: Set<String> = []
 
     var selectedDay: String? {
-        guard selectedDays.count == 1 else { return selectedDays.min() }
+        guard selectedDays.count == 1 else { return nil }
         return selectedDays.first
     }
     private(set) var menubarPeriod: Period = Period.savedMenubarPeriod() {
@@ -294,7 +294,8 @@ final class AppStore {
         let period = selectedPeriod
         let provider = selectedProvider
         let day = selectedDay
-        let key = PayloadCacheKey(period: period, provider: provider, day: day)
+        let days = selectedDays
+        let key = PayloadCacheKey(period: period, provider: provider, day: day, days: days)
         lastErrorByKey[key] = nil
         switchTask = Task {
             if provider == .all {
@@ -403,8 +404,15 @@ final class AppStore {
     }
 
     func recoverFromStuckLoading() async {
-        resetLoadingState()
-        await refresh(key: currentKey, includeOptimize: false, force: true, showLoading: true)
+        let key = currentKey
+        guard inFlightKeys[key] == nil else { return }
+        loadingCountsByKey[key] = nil
+        loadingStartedAtByKey[key] = nil
+        await refresh(key: key, includeOptimize: false, force: true, showLoading: true)
+    }
+
+    func setRecoveryExhausted(for label: String) {
+        lastErrorByKey[currentKey] = "Could not load \(label). Check that the codeburn CLI is installed and working."
     }
 
     func refresh(includeOptimize: Bool, force: Bool = false, showLoading: Bool = false) async {
