@@ -14,15 +14,6 @@ private let popoverHeight: CGFloat = 660
 private let menubarTitleFontSize: CGFloat = 13
 
 @main
-enum CodeBurnEntry {
-    static func main() {
-        if CommandLine.arguments.dropFirst().contains("--refresh-once") {
-            HeadlessRefresh.run()
-        }
-        CodeBurnApp.main()
-    }
-}
-
 struct CodeBurnApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
@@ -94,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         startRefreshLoop()
         setupWakeObservers()
         setupDistributedNotificationListener()
-        installLaunchAgentIfNeeded()
+        removeLegacyRefreshAgent()
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
         Task { await updateChecker.checkIfNeeded() }
@@ -216,59 +207,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func installLaunchAgentIfNeeded() {
+    // Earlier builds installed a launchd job that re-fetched data out of process.
+    // macOS attributes a launchd-spawned binary differently from the LaunchServices
+    // app, so it triggered its own "access data from other apps" prompt on every
+    // run. Remove any such leftover job on upgrade; the in-app loop is the source of
+    // truth and writes the badge backstop file itself.
+    private func removeLegacyRefreshAgent() {
         let fm = FileManager.default
-        let agentName = "com.codeburn.refresh.plist"
         let home = fm.homeDirectoryForCurrentUser.path
-        let destPath = "\(home)/Library/LaunchAgents/\(agentName)"
+        let destPath = "\(home)/Library/LaunchAgents/com.codeburn.refresh.plist"
+        guard fm.fileExists(atPath: destPath) else { return }
 
-        // Run the app's own signed binary headless so the CLI it spawns inherits
-        // CodeBurn's TCC grant instead of prompting as a bare `node` process.
-        guard let binaryPath = Bundle.main.executablePath else {
-            NSLog("CodeBurn: no executablePath; skipping LaunchAgent install")
-            return
-        }
-        let plist = """
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.codeburn.refresh</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>\(binaryPath)</string>
-        <string>--refresh-once</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>30</integer>
-    <key>RunAtLoad</key>
-    <true/>
-</dict>
-</plist>
-"""
-
-        do {
-            let existing = try? String(contentsOfFile: destPath, encoding: .utf8)
-            if existing == plist { return }
-
-            try fm.createDirectory(atPath: "\(home)/Library/LaunchAgents", withIntermediateDirectories: true)
-            try plist.write(toFile: destPath, atomically: true, encoding: .utf8)
-
-            let unload = Process()
-            unload.launchPath = "/bin/launchctl"
-            unload.arguments = ["unload", destPath]
-            try? unload.run()
-            unload.waitUntilExit()
-
-            let load = Process()
-            load.launchPath = "/bin/launchctl"
-            load.arguments = ["load", destPath]
-            try load.run()
-            load.waitUntilExit()
-        } catch {
-            NSLog("CodeBurn: LaunchAgent setup failed: \(error)")
-        }
+        let unload = Process()
+        unload.launchPath = "/bin/launchctl"
+        unload.arguments = ["unload", destPath]
+        try? unload.run()
+        unload.waitUntilExit()
+        try? fm.removeItem(atPath: destPath)
     }
 
     private func registerLoginItemIfNeeded() {
@@ -797,11 +752,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         button.attributedTitle = composed
         button.toolTip = "CodeBurn \(menubarPeriod.menubarMetricLabel)"
+
+        persistBadgeStatusFile()
     }
 
-    // Badge falls back to the launchd-written status file when the in-app loop
-    // is dead or behind; in-memory wins when it's fresher. The 10-min bound
-    // discards a file the 30s job has stopped updating.
+    private var lastWrittenBadgeGenerated: String?
+
+    // Mirror the freshest in-memory payload to disk so the badge survives an app
+    // restart. Skips redundant writes by tracking the last payload's `generated`
+    // stamp. This is the only writer now that the launchd fetcher is gone.
+    private func persistBadgeStatusFile() {
+        guard let payload = store.menubarPayload else { return }
+        guard payload.generated != lastWrittenBadgeGenerated else { return }
+        do {
+            try MenubarStatusCache.standard().writeStatus(payload)
+            lastWrittenBadgeGenerated = payload.generated
+        } catch {
+            NSLog("CodeBurn: failed to write badge status file: \(error)")
+        }
+    }
+
+    // Badge falls back to the on-disk status file (written by a prior app run)
+    // when the in-app loop has no payload yet; in-memory wins when it's fresher.
+    // The 10-min bound discards a file too stale to trust.
     private func badgePayload() -> MenubarPayload? {
         let inMemory = store.menubarPayload
         let inMemoryAge = store.menubarPayloadAgeSeconds.map(TimeInterval.init)

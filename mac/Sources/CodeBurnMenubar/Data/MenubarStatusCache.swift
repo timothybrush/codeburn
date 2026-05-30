@@ -1,10 +1,9 @@
 import Foundation
 
-/// On-disk badge backstop. A static LaunchAgent runs the app's own signed binary
-/// in `--refresh-once` mode every 30s; it atomically writes `menubar-status.json`,
-/// which the app reads as a badge fallback when the in-app refresh loop is behind
-/// or dead. Shares the `MenubarPayload` decoder with the live path — no separate
-/// data model.
+/// On-disk badge backstop. The app writes `menubar-status.json` on each successful
+/// refresh and reads it back as a badge fallback after a restart, before the live
+/// loop has produced a payload. Shares the `MenubarPayload` model with the live
+/// path — no separate data model.
 struct MenubarStatusCache {
     let statusPath: String
 
