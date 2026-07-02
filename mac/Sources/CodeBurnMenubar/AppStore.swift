@@ -1059,6 +1059,9 @@ final class AppStore {
             if let pct = usage.sevenDaySonnetPercent {
                 details.append(.init(label: "Weekly · Sonnet", percent: pct / 100, resetsAt: usage.sevenDaySonnetResetsAt))
             }
+            for scoped in usage.scopedWeekly {
+                details.append(.init(label: "Weekly · \(scoped.label)", percent: scoped.percent / 100, resetsAt: scoped.resetsAt))
+            }
         }
         let plan = subscription?.tier.displayName
         return QuotaSummary(providerFilter: filter, connection: connection, primary: primary, details: details, planLabel: plan, footerLines: [])
