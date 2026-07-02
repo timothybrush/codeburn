@@ -138,7 +138,7 @@ describe.skipIf(skipReason !== null)('zed provider (#480)', () => {
 
   it('skips non-zstd rows and malformed blobs without dropping healthy threads', async () => {
     const dbPath = buildDb((db) => {
-      insertThread(db, { id: 'bad-type', dataType: 'json', rawData: Buffer.from('{}') })
+      insertThread(db, { id: 'bad-type', dataType: 'protobuf', rawData: Buffer.from('{}') })
       insertThread(db, { id: 'bad-blob', rawData: Buffer.from('not zstd at all') })
       insertThread(db, {
         id: 'good',
@@ -152,6 +152,24 @@ describe.skipIf(skipReason !== null)('zed provider (#480)', () => {
     const calls = await collectCalls(dbPath)
     expect(calls.length).toBe(1)
     expect(calls[0]!.sessionId).toBe('good')
+  })
+
+  it('reads legacy uncompressed json rows alongside zstd rows', async () => {
+    const dbPath = buildDb((db) => {
+      insertThread(db, {
+        id: 'legacy',
+        dataType: 'json',
+        rawData: Buffer.from(JSON.stringify({
+          model: { model: 'claude-sonnet-4-6' },
+          request_token_usage: { 'req-1': { input_tokens: 40, output_tokens: 8 } },
+        })),
+      })
+    })
+
+    const calls = await collectCalls(dbPath)
+    expect(calls.length).toBe(1)
+    expect(calls[0]!.inputTokens).toBe(40)
+    expect(calls[0]!.model).toBe('claude-sonnet-4-6')
   })
 
   it('dedupes across repeat parses via the shared seenKeys set', async () => {

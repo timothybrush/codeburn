@@ -112,7 +112,9 @@ function parseThreads(db: SqliteDatabase, seenKeys: Set<string>): ParsedProvider
 
   for (const row of rows) {
     try {
-      if (!row.id || !row.data || row.data_type !== 'zstd') {
+      // Zed's DataType enum is "zstd" (current save path) or "json" (legacy
+      // uncompressed rows); anything else is unknown.
+      if (!row.id || !row.data || (row.data_type !== 'zstd' && row.data_type !== 'json')) {
         if (row.data != null) skipped++
         continue
       }
@@ -120,7 +122,10 @@ function parseThreads(db: SqliteDatabase, seenKeys: Set<string>): ParsedProvider
       if (Number.isNaN(parsedAt.getTime())) continue
       const timestamp = parsedAt.toISOString()
 
-      const thread = JSON.parse(zstdDecompress!(Buffer.from(row.data)).toString('utf-8')) as ThreadJson
+      const jsonText = row.data_type === 'zstd'
+        ? zstdDecompress!(Buffer.from(row.data)).toString('utf-8')
+        : Buffer.from(row.data).toString('utf-8')
+      const thread = JSON.parse(jsonText) as ThreadJson
       const model = thread.model?.model || 'unknown'
       const userMessage = row.summary ?? ''
 
