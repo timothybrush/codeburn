@@ -14,6 +14,27 @@ export type FileChange = {
   afterHash: string       // sha256 of the post-apply bytes, checked for drift on undo
 }
 
+// Before/after measurement captured when an action is applied, diffed against
+// the post-apply window by `act report`. `metrics` holds the kind-specific
+// numbers:
+//   mcp-remove / mcp-project-scope: server name -> schema tokens per session
+//   archive-skill|agent|command:    item name   -> definition tokens per session
+//   claude-md-rule (read/edit rule): { reads, edits }
+//   shell-config (bash cap):         { calls }
+//   guard-install:                   { abandonedPct, avgSessionCostUSD }
+// estimatedTokens is the finding's estimate at apply time (0 for guard, which
+// is a correlation signal, not a token estimate). sessions is the affected-scope
+// session count over the window, kept out of `metrics` so it can never collide
+// with a server literally named "sessions"; it feeds only the volume-shift
+// confidence check.
+export type ActionBaseline = {
+  windowDays: number
+  capturedAt: string
+  estimatedTokens: number
+  sessions: number
+  metrics: Record<string, number>
+}
+
 export type ActionRecord = {
   id: string              // crypto.randomUUID()
   at: string              // ISO timestamp
@@ -23,7 +44,7 @@ export type ActionRecord = {
   changes: FileChange[]
   status: 'applied' | 'undone'
   undoneAt?: string
-  baseline?: Record<string, number>
+  baseline?: ActionBaseline
 }
 
 // expectedHash: sha256 of the raw on-disk bytes the plan's content was
@@ -41,5 +62,5 @@ export type ActionPlan = {
   description: string
   findingId?: string | null
   changes: PlannedChange[]
-  baseline?: Record<string, number>
+  baseline?: ActionBaseline
 }

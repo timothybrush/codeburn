@@ -26,12 +26,12 @@ const RED = '#F55B5B'
 // Token estimation constants
 // ============================================================================
 
-const AVG_TOKENS_PER_READ = 600
-const TOKENS_PER_MCP_TOOL = 400
-const TOOLS_PER_MCP_SERVER = 5
-const TOKENS_PER_AGENT_DEF = 80
-const TOKENS_PER_SKILL_DEF = 80
-const TOKENS_PER_COMMAND_DEF = 60
+export const AVG_TOKENS_PER_READ = 600
+export const TOKENS_PER_MCP_TOOL = 400
+export const TOOLS_PER_MCP_SERVER = 5
+export const TOKENS_PER_AGENT_DEF = 80
+export const TOKENS_PER_SKILL_DEF = 80
+export const TOKENS_PER_COMMAND_DEF = 60
 const CLAUDEMD_TOKENS_PER_LINE = 13
 const BASH_TOKENS_PER_CHAR = 0.25
 
@@ -48,7 +48,7 @@ const MIN_DUPLICATE_READS_TO_FLAG = 5
 const DUPLICATE_READS_HIGH_THRESHOLD = 30
 const DUPLICATE_READS_MEDIUM_THRESHOLD = 10
 const MIN_EDITS_FOR_RATIO = 10
-const HEALTHY_READ_EDIT_RATIO = 4
+export const HEALTHY_READ_EDIT_RATIO = 4
 const LOW_RATIO_HIGH_THRESHOLD = 2
 const LOW_RATIO_MEDIUM_THRESHOLD = 3
 const MIN_API_CALLS_FOR_CACHE = 10
@@ -1605,8 +1605,8 @@ export function detectBloatedClaudeMd(projectCwds: Set<string>): WasteFinding | 
   }
 }
 
-const READ_TOOL_NAMES = new Set(['Read', 'Grep', 'Glob', 'FileReadTool', 'GrepTool', 'GlobTool'])
-const EDIT_TOOL_NAMES = new Set(['Edit', 'Write', 'FileEditTool', 'FileWriteTool', 'NotebookEdit'])
+export const READ_TOOL_NAMES = new Set(['Read', 'Grep', 'Glob', 'FileReadTool', 'GrepTool', 'GlobTool'])
+export const EDIT_TOOL_NAMES = new Set(['Edit', 'Write', 'FileEditTool', 'FileWriteTool', 'NotebookEdit'])
 
 export function detectLowReadEditRatio(calls: ToolCall[]): WasteFinding | null {
   let reads = 0
@@ -2343,7 +2343,7 @@ function sessionTrend(
 const INPUT_COST_RATIO = 0.7
 const DEFAULT_COST_PER_TOKEN = 0
 
-function computeInputCostRate(projects: ProjectSummary[]): number {
+export function computeInputCostRate(projects: ProjectSummary[]): number {
   const sessions = projects.flatMap(p => p.sessions)
   const totalCost = sessions.reduce((s, sess) => s + sess.totalCostUSD, 0)
   const totalTokens = sessions.reduce((s, sess) =>
@@ -2526,6 +2526,8 @@ function renderOptimize(
   callCount: number,
   healthScore: number,
   healthGrade: HealthGrade,
+  appliedHeader?: string,
+  previouslyApplied?: Record<string, string>,
 ): string {
   const lines: string[] = []
   lines.push('')
@@ -2539,6 +2541,7 @@ function renderOptimize(
     chalk.hex(GOLD)(formatCost(periodCost)),
     `Health: ${chalk.bold.hex(GRADE_COLORS[healthGrade])(healthGrade)}${chalk.dim(` (${healthScore}/100${issueSuffix})`)}`,
   ].join(chalk.hex(DIM)('   ')))
+  if (appliedHeader) lines.push('  ' + chalk.hex(GREEN)(appliedHeader))
   lines.push('')
 
   if (findings.length === 0) {
@@ -2561,7 +2564,10 @@ function renderOptimize(
   lines.push('')
 
   for (let i = 0; i < findings.length; i++) {
-    lines.push(...renderFinding(i + 1, findings[i], costRate))
+    const f = findings[i]!
+    const appliedOn = previouslyApplied?.[f.id]
+    const shown = appliedOn ? { ...f, title: `${f.title} (previously applied ${appliedOn}, re-flagged)` } : f
+    lines.push(...renderFinding(i + 1, shown, costRate))
   }
 
   lines.push(chalk.hex(DIM)('  ' + SEP.repeat(PANEL_WIDTH)))
@@ -2574,7 +2580,7 @@ export async function runOptimize(
   projects: ProjectSummary[],
   periodLabel: string,
   dateRange?: DateRange,
-  opts: { format?: 'text' | 'json' } = {},
+  opts: { format?: 'text' | 'json'; appliedHeader?: string; previouslyApplied?: Record<string, string> } = {},
 ): Promise<void> {
   const format = opts.format ?? 'text'
   if (projects.length === 0 && format === 'text') {
@@ -2597,7 +2603,7 @@ export async function runOptimize(
     return
   }
 
-  const output = renderOptimize(findings, costRate, periodLabel, periodCost, sessions.length, callCount, healthScore, healthGrade)
+  const output = renderOptimize(findings, costRate, periodLabel, periodCost, sessions.length, callCount, healthScore, healthGrade, opts.appliedHeader, opts.previouslyApplied)
   console.log(output)
 }
 

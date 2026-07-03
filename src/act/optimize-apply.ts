@@ -162,6 +162,15 @@ export async function runOptimizeApply(
     return
   }
 
+  // Stamp a trailing-14-day before-baseline onto each plan so runAction
+  // persists it and `act report` can measure realized savings later. Best
+  // effort: a scan failure leaves the baseline absent (reported "not
+  // measurable"), never blocking the apply.
+  try {
+    const { captureBaselinesForPlans } = await import('./report.js')
+    await captureBaselinesForPlans(selected)
+  } catch { /* baseline is optional; apply proceeds without it */ }
+
   print()
   for (const fp of selected) {
     try {

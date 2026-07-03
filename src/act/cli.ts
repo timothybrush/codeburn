@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { renderTable } from '../text-table.js'
 import { defaultActionsDir, readRecords, shortId } from './journal.js'
 import { DriftError, undoAction } from './undo.js'
+import { buildActReportJson, computeActReport, renderActReport } from './report.js'
 
 function formatWhen(at: string): string {
   return at.replace('T', ' ').slice(0, 16)
@@ -60,6 +61,24 @@ export function registerActCommands(program: Command): void {
         } else {
           console.error(err instanceof Error ? err.message : String(err))
         }
+        process.exitCode = 1
+      }
+    })
+
+  act
+    .command('report')
+    .description('Realized vs estimated savings for applied actions older than 3 days')
+    .option('--json', 'Output the realized report as JSON')
+    .action(async (opts: { json?: boolean }) => {
+      try {
+        const report = await computeActReport()
+        if (opts.json) {
+          console.log(JSON.stringify(buildActReportJson(report), null, 2))
+          return
+        }
+        console.log(renderActReport(report))
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err))
         process.exitCode = 1
       }
     })
