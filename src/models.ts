@@ -685,21 +685,42 @@ export interface UnpricedModelUsage {
   tokens: number
 }
 
+function hasBillableRate(costs: ModelCosts): boolean {
+  return costs.inputCostPerToken > 0
+    || costs.outputCostPerToken > 0
+    || costs.cacheWriteCostPerToken > 0
+    || costs.cacheReadCostPerToken > 0
+}
+
+// The user-override lookup from getModelCosts, in isolation. Lets the unpriced
+// detector distinguish "explicitly declared free by the user" (a zero-rate
+// override) from a zero-rate LiteLLM stub, which means "listed but unknown
+// price" and must still be flagged.
+function userPriceOverrideFor(model: string): ModelCosts | null {
+  const withPrefix = model.replace(/@.*$/, '').replace(/-\d{8}$/, '')
+  const canonicalName = getCanonicalName(model)
+  const canonical = resolveAlias(canonicalName)
+  return getPriceOverrideExact(model, withPrefix, canonicalName, canonical)
+    ?? getPriceOverridePrefix(canonical)
+    ?? getPriceOverrideCaseInsensitive(canonical, withPrefix)
+}
+
 // Render-time unpriced detection (#638): flag aggregated model rows that carry
-// usage but $0 cost AND whose pricing lookup fails against the CURRENT tables.
-// Cost is computed at parse time and cached, so a parse-time registry would
-// miss cached sessions; a render-time check covers both and heals itself the
+// usage but $0 cost AND whose pricing lookup yields no billable rate right
+// now. Cost is computed at parse time and cached, so a parse-time registry
+// would miss cached sessions; a render-time check covers both and heals the
 // moment pricing data, an alias, or a price override arrives.
 //
-// Both conditions are required because aggregation keys rows by DISPLAY name
+// Rows with cost > 0 are never flagged: aggregation keys rows by DISPLAY name
 // (parser.ts keys modelBreakdown via getShortModelName), which the pricing
-// lookup does not resolve: a priced model like "Opus 4.8" fails the lookup but
-// has real cost, so cost > 0 rows are never flagged. For $0 rows the display
-// name is reverse-resolved before flagging, so sessions cached before their
-// model's pricing landed don't produce a misleading "add an alias" hint.
-// Conservative by design: a display key merging priced and unpriced raw ids
-// carries cost > 0 and is not flagged. Local-looking models and models with a
-// local-savings mapping are excluded because $0 is their correct cost.
+// lookup misses, so a priced model like "Opus 4.8" would otherwise false-flag.
+// $0 display-name rows ARE flagged even when the raw id would price today:
+// those tokens really did enter the report at $0 (a provider priced a
+// transformed name, or the session was cached before its model's pricing
+// landed). Conservative by design: a display key merging priced and unpriced
+// raw ids carries cost > 0 and is not flagged. Local-looking models and
+// models with a local-savings mapping are excluded because $0 is their
+// correct cost, as are zero-rate USER overrides (explicitly declared free).
 export function findUnpricedModels(
   rows: Iterable<{ model: string; calls: number; cost: number; tokens?: number }>,
 ): UnpricedModelUsage[] {
@@ -712,12 +733,13 @@ export function findUnpricedModels(
     if (row.cost > 0) continue
     if (looksLikeLocalModel(model)) continue
     if (getLocalSavingsBaseline(model)) continue
-    if (getModelCosts(model)) continue
-    const rawId = reverseDisplayName(model)
-    if (rawId && (getModelCosts(rawId) || getLocalSavingsBaseline(rawId) || looksLikeLocalModel(rawId))) continue
+    const costs = getModelCosts(model)
+    if (costs && hasBillableRate(costs)) continue
+    if (costs && userPriceOverrideFor(model)) continue
     out.push({ model, calls: row.calls, tokens })
   }
-  return out.sort((a, b) => (b.tokens - a.tokens) || (b.calls - a.calls) || a.model.localeCompare(b.model))
+  return out.sort((a, b) => (b.tokens - a.tokens) || (b.calls - a.calls)
+    || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0))
 }
 
 function shouldWarnAboutUnknownModel(name: string): boolean {
@@ -873,30 +895,6 @@ const SHORT_NAMES: Record<string, string> = {
 // behind the wrong display name and pricing tier.
 const SORTED_SHORT_NAMES: [string, string][] = Object.entries(SHORT_NAMES)
   .sort((a, b) => b[0].length - a[0].length)
-
-// Display name -> raw model id, for aggregation surfaces keyed by
-// getShortModelName output (see findUnpricedModels). First table entry wins;
-// derived Claude names ("Opus 4.8") are handled by pattern below.
-let reverseDisplayNamesCache: Map<string, string> | null = null
-function reverseDisplayName(display: string): string | null {
-  if (!reverseDisplayNamesCache) {
-    reverseDisplayNamesCache = new Map()
-    for (const [id, name] of [...Object.entries(SHORT_NAMES), ...Object.entries(autoModelNames)]) {
-      if (!reverseDisplayNamesCache.has(name)) reverseDisplayNamesCache.set(name, id)
-    }
-  }
-  const direct = reverseDisplayNamesCache.get(display)
-  if (direct) return direct
-  // Inverse of deriveClaudeShortName: "Opus 4.8" -> claude-opus-4-8.
-  const claude = /^(Opus|Sonnet|Haiku) (\d+)(?:\.(\d+))?$/.exec(display)
-  if (claude) {
-    const family = claude[1]!.toLowerCase()
-    return claude[3] !== undefined
-      ? `claude-${family}-${claude[2]}-${claude[3]}`
-      : `claude-${family}-${claude[2]}`
-  }
-  return null
-}
 
 // Anthropic's id scheme is `claude-<family>-<major>[-<minor>]`, so every new
 // version is derivable — no hand-maintained entry per release. (Legacy 3.x ids

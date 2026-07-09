@@ -697,15 +697,51 @@ describe('findUnpricedModels', () => {
     expect(unpriced).toEqual([])
   })
 
-  it('reverse-resolves display names before flagging $0 rows', () => {
-    // Sessions cached before a model's pricing landed carry $0 cost under a
-    // display-name key. The raw id prices today, so no "add an alias" hint.
+  it('flags $0 display-name rows even when the raw id would price today', () => {
+    // Droid prices the lowercased display name ("claude sonnet 4.6" -> no
+    // pricing -> $0) and the parser keys the row by display name. Those
+    // tokens really entered the report at $0, so the row must be flagged
+    // even though claude-sonnet-4-6 itself is priced.
     const unpriced = findUnpricedModels([
-      { model: 'Fable 5', calls: 94, cost: 0, tokens: 12_000_000 },
-      { model: 'Opus 4.8', calls: 33, cost: 0, tokens: 1_600_000 },
-      { model: 'GPT-4o', calls: 7, cost: 0, tokens: 900 },
+      { model: 'Sonnet 4.6', calls: 12, cost: 0, tokens: 500_000 },
     ])
-    expect(unpriced).toEqual([])
+    expect(unpriced).toEqual([{ model: 'Sonnet 4.6', calls: 12, tokens: 500_000 }])
+  })
+
+  it('flags zero-rate pricing stubs but not explicit zero-rate user overrides', async () => {
+    // LiteLLM ships [0,0] stubs for models it lists but has no price for;
+    // a stub hit means "unknown price", not "free".
+    const cacheRoot = await mkdtemp(join(tmpdir(), 'codeburn-pricing-cache-'))
+    try {
+      process.env['CODEBURN_CACHE_DIR'] = cacheRoot
+      await writeFile(join(cacheRoot, 'litellm-pricing.json'), JSON.stringify({
+        timestamp: Date.now(),
+        data: {
+          'zz-zero-stub-model': {
+            inputCostPerToken: 0,
+            outputCostPerToken: 0,
+            cacheWriteCostPerToken: 0,
+            cacheReadCostPerToken: 0,
+            webSearchCostPerRequest: 0,
+            fastMultiplier: 1,
+          },
+        },
+      }), 'utf-8')
+      await loadPricing()
+
+      expect(getModelCosts('zz-zero-stub-model')).not.toBeNull()
+      const rows = [{ model: 'zz-zero-stub-model', calls: 3, cost: 0, tokens: 1100 }]
+      expect(findUnpricedModels(rows)).toHaveLength(1)
+
+      // An explicit user override at zero rates means "this model is free".
+      setPriceOverrides({ 'zz-zero-stub-model': { input: 0, output: 0 } })
+      expect(findUnpricedModels(rows)).toEqual([])
+    } finally {
+      delete process.env['CODEBURN_CACHE_DIR']
+      await rm(cacheRoot, { recursive: true, force: true })
+      setPriceOverrides({})
+      await loadPricing()
+    }
   })
 
   it('skips synthetic, empty, local-looking, and zero-usage rows', () => {

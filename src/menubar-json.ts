@@ -145,8 +145,9 @@ export type MenubarPayload = {
       calls: number
     }>
     /// See PeriodData.unpricedModels: usage priced at $0 for lack of pricing
-    /// data. Empty when every model in the period resolved a price.
-    unpricedModels: Array<{ model: string; calls: number; tokens: number }>
+    /// data. Empty when every model in the period resolved a price. Optional
+    /// so payload producers that predate the field stay source-compatible.
+    unpricedModels?: Array<{ model: string; calls: number; tokens: number }>
     /// Local-model savings rollup, distinct from the routing-waste /
     /// optimize savings concepts which describe hypothetical optimization
     /// opportunities. This block tracks counterfactual spend that was
