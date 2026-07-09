@@ -692,17 +692,19 @@ function hasBillableRate(costs: ModelCosts): boolean {
     || costs.cacheReadCostPerToken > 0
 }
 
-// The user-override lookup from getModelCosts, in isolation. Lets the unpriced
-// detector distinguish "explicitly declared free by the user" (a zero-rate
-// override) from a zero-rate LiteLLM stub, which means "listed but unknown
-// price" and must still be flagged.
-function userPriceOverrideFor(model: string): ModelCosts | null {
+// Exact-override lookup with the same key derivation getModelCosts uses. Lets
+// the unpriced detector distinguish "explicitly declared free by the user" (a
+// zero-rate override) from a zero-rate LiteLLM stub, which means "listed but
+// unknown price" and must still be flagged. Only the EXACT override form is
+// consulted: getModelCosts checks it before any table hit, so when one exists
+// it is provably what priced the model. Prefix and case-insensitive overrides
+// resolve AFTER table hits and so cannot prove the $0 was intentional; a
+// zero-rate stub shadowed by one still gets flagged (the honest direction).
+function exactPriceOverrideFor(model: string): ModelCosts | null {
   const withPrefix = model.replace(/@.*$/, '').replace(/-\d{8}$/, '')
   const canonicalName = getCanonicalName(model)
   const canonical = resolveAlias(canonicalName)
   return getPriceOverrideExact(model, withPrefix, canonicalName, canonical)
-    ?? getPriceOverridePrefix(canonical)
-    ?? getPriceOverrideCaseInsensitive(canonical, withPrefix)
 }
 
 // Render-time unpriced detection (#638): flag aggregated model rows that carry
@@ -735,7 +737,7 @@ export function findUnpricedModels(
     if (getLocalSavingsBaseline(model)) continue
     const costs = getModelCosts(model)
     if (costs && hasBillableRate(costs)) continue
-    if (costs && userPriceOverrideFor(model)) continue
+    if (costs && exactPriceOverrideFor(model)) continue
     out.push({ model, calls: row.calls, tokens })
   }
   return out.sort((a, b) => (b.tokens - a.tokens) || (b.calls - a.calls)

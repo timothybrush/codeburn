@@ -736,6 +736,12 @@ describe('findUnpricedModels', () => {
       // An explicit user override at zero rates means "this model is free".
       setPriceOverrides({ 'zz-zero-stub-model': { input: 0, output: 0 } })
       expect(findUnpricedModels(rows)).toEqual([])
+
+      // A prefix override cannot prove intent: getModelCosts resolves table
+      // hits before prefix overrides, so the $0 came from the stub, not the
+      // user. Still flagged.
+      setPriceOverrides({ 'zz-zero-stub': { input: 0, output: 0 } })
+      expect(findUnpricedModels(rows)).toHaveLength(1)
     } finally {
       delete process.env['CODEBURN_CACHE_DIR']
       await rm(cacheRoot, { recursive: true, force: true })
