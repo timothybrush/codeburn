@@ -1530,6 +1530,8 @@ async function scanProjectDirs(
   const unchangedFiles: Array<{ filePath: string; dirName: string; cached: CachedFile }> = []
   const changedFiles: Array<{ filePath: string; info: FileInfo }> = []
 
+  const discoverProgress = createScanProgress('scanning claude project dirs', dirs.length)
+  let dirsDone = 0
   for (const { path: dirPath, name: dirName } of dirs) {
     const jsonlFiles = await collectJsonlFiles(dirPath)
     for (const filePath of jsonlFiles) {
@@ -1544,7 +1546,10 @@ async function scanProjectDirs(
         changedFiles.push({ filePath, info: { dirName, fp } })
       }
     }
+    dirsDone++
+    await discoverProgress.tick(dirsDone)
   }
+  discoverProgress.finish()
 
   // Pre-seed dedup set from cached (unchanged) files
   for (const { cached } of unchangedFiles) {
@@ -1555,13 +1560,15 @@ async function scanProjectDirs(
     }
   }
 
+  const parseProgress = createScanProgress('parsing changed claude sessions', changedFiles.length)
+  let filesDone = 0
   for (const { filePath, info } of changedFiles) {
     delete section.files[filePath]
 
     try {
       const tracker = { lastCompleteLineOffset: 0 }
       const entries = await parseClaudeEntries(filePath, tracker)
-      if (!entries) continue
+      if (!entries) { filesDone++; await parseProgress.tick(filesDone); continue }
 
       const turns = groupIntoTurns(dedupeStreamingMessageIds(entries), seenMsgIds)
       const cwd = extractCanonicalCwd(entries)
@@ -1586,7 +1593,10 @@ async function scanProjectDirs(
       ;(diskCache as { _dirty?: boolean })._dirty = true
       warnProviderParseFailure('claude', filePath, err)
     }
+    filesDone++
+    await parseProgress.tick(filesDone)
   }
+  parseProgress.finish()
 
   if (dirs.length > 0) {
     for (const cachedPath of Object.keys(section.files)) {
@@ -1955,6 +1965,58 @@ function warnProviderParseFailure(providerName: string, sourcePath: string, err:
   process.stderr.write(
     `codeburn: skipped ${providerName} session that failed to parse: ${sourcePath} (${msg})${tail}\n`
   )
+}
+
+// A cold-cache scan over a large ~/.claude/projects tree (hundreds of project
+// dirs, e.g. a git-worktree-per-task workflow) can run long enough that it
+// looks hung, and is CPU-heavy enough on a single thread to visibly compete
+// with anything else running interactively on the same machine. Two cheap
+// mitigations, neither of which reduces total CPU work: (1) a `\r`-updated
+// progress line so a long cold run reads as "working" instead of "stuck",
+// gated on isTTY so it never corrupts piped/captured output (export.ts, the
+// --no-color path, or a subprocess capturing stderr); (2) yielding to the
+// event loop every YIELD_EVERY items so the OS scheduler gets regular break
+// points instead of one long uninterrupted synchronous block. This does NOT
+// fix CPU contention with a separate process (that's the OS scheduler's job
+// regardless), it only keeps this process itself responsive and honest about
+// progress during the scan.
+const YIELD_EVERY = 25
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
+// Suppress the scan-progress line while an interactive Ink UI is live. The
+// dashboard and compare render to stdout on the same terminal, and their scans
+// run (dashboard) or re-run every 30s (dashboard auto-refresh, including the
+// getPlanUsages → parseAllSessions path) AFTER render() has painted a frame, so
+// a `\r` progress line on stderr prints over it and garbles the screen. isTTY
+// alone can't tell them apart from a plain CLI command. The interactive
+// entrypoints call setInteractiveScanUI() right before render(); a pre-render
+// scan (e.g. compare's cold start) still shows progress and finish() clears the
+// line before Ink paints.
+let interactiveScanUI = false
+export function setInteractiveScanUI(active = true): void {
+  interactiveScanUI = active
+}
+
+export function createScanProgress(label: string, total: number) {
+  const show = !interactiveScanUI && total > 20 && process.stderr.isTTY === true
+  let lastWrite = 0
+  return {
+    async tick(done: number): Promise<void> {
+      if (done % YIELD_EVERY === 0) await yieldToEventLoop()
+      if (!show) return
+      const now = Date.now()
+      if (done !== total && now - lastWrite < 100) return
+      lastWrite = now
+      process.stderr.write(`\rcodeburn: ${label} ${done}/${total}…`)
+    },
+    finish(): void {
+      if (!show) return
+      process.stderr.write('\r\x1b[K')
+    },
+  }
 }
 
 async function parseProviderSources(
