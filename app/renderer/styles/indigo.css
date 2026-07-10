@@ -121,6 +121,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; margin: 0 0 6px
 .s-son { background: var(--purple); }
 .s-hai { background: var(--lav); }
 .s-gpt { background: var(--cyan); }
+.s-other { background: var(--t3); }
 .legend { display: flex; gap: 16px; padding: 9px 4px 0; font-size: 10.5px; color: var(--t2); flex-wrap: wrap; }
 .legend i { width: 8px; height: 8px; border-radius: 2.5px; display: inline-block; margin-right: 6px; vertical-align: -1px; }
 

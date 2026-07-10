@@ -8,6 +8,7 @@ import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
 import { codeburn } from './lib/ipc'
 import { Overview } from './sections/Overview'
+import { Spend } from './sections/Spend'
 import type { MenubarPayload, Period } from './lib/types'
 
 const SECTION_TITLES: Record<Section, string> = {
@@ -68,6 +69,8 @@ export function App() {
         <div className="body">
           {section === 'overview' ? (
             <Overview period={period} provider={provider} />
+          ) : section === 'spend' ? (
+            <Spend period={period} provider={provider} />
           ) : (
             <SectionPlaceholder title={SECTION_TITLES[section]} />
           )}
