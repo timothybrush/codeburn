@@ -1,4 +1,5 @@
 import { parseAllSessions } from './parser.js'
+import { toDateString } from './daily-cache.js'
 import type { DateRange } from './types.js'
 
 export type SpendFlowNode = { id: string; label: string; cost: number }
@@ -11,14 +12,10 @@ export type SpendFlow = {
 }
 
 const TOP_NODE_LIMIT = 8
-const OTHER_ID = 'other'
-
-function datePart(date: Date): string {
-  return date.toISOString().slice(0, 10)
-}
+const OTHER_ID = '__other__'
 
 function periodLabel(range: DateRange): string {
-  return `${datePart(range.start)} to ${datePart(range.end)}`
+  return `${toDateString(range.start)} to ${toDateString(range.end)}`
 }
 
 function addToMap<K>(map: Map<K, number>, key: K, cost: number): void {

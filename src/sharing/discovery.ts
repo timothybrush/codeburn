@@ -57,9 +57,15 @@ export function browse(timeoutMs = 2500): Promise<DiscoveredDevice[]> {
       }
     }
 
-    bonjour = new Bonjour({}, () => finish([]))
+    const finishWithError = (err?: unknown) => {
+      if (err) console.error(`codeburn devices scan: mDNS discovery failed: ${err instanceof Error ? err.message : String(err)}`)
+      else console.error('codeburn devices scan: mDNS discovery failed')
+      finish([...found.values()])
+    }
+
+    bonjour = new Bonjour({}, finishWithError)
     const mdns = (bonjour as unknown as { server?: { mdns?: { on: (event: string, cb: () => void) => void } } }).server?.mdns
-    mdns?.on('error', () => finish([]))
+    mdns?.on('error', finishWithError)
     browser = bonjour.find({ type: SERVICE_TYPE }, (service) => {
       const txt = (service.txt ?? {}) as Record<string, string>
       const fingerprint = txt['fp']

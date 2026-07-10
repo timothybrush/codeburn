@@ -3,10 +3,49 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-function runCli(args: string[], home: string) {
-  return spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
+const DISCOVERY_MOCK_REGISTER = join(process.cwd(), 'tests', 'fixtures', 'mock-discovery-register.mjs')
+
+const bonjourMock = vi.hoisted(() => ({
+  destroy: vi.fn((cb: () => void) => cb()),
+  find: vi.fn(),
+  mdnsOn: vi.fn(),
+  stop: vi.fn(),
+  serviceCallback: undefined as ((service: {
+    txt?: Record<string, string>
+    addresses?: string[]
+    host?: string
+    name?: string
+    port: number
+  }) => void) | undefined,
+  errorCallback: undefined as ((err?: unknown) => void) | undefined,
+}))
+
+vi.mock('bonjour-service', () => ({
+  Bonjour: class {
+    server = {
+      mdns: {
+        on: bonjourMock.mdnsOn.mockImplementation((_event: string, cb: (err?: unknown) => void) => {
+          bonjourMock.errorCallback = cb
+        }),
+      },
+    }
+
+    destroy = bonjourMock.destroy
+
+    find(_opts: unknown, cb: NonNullable<typeof bonjourMock.serviceCallback>) {
+      bonjourMock.serviceCallback = cb
+      bonjourMock.find(_opts, cb)
+      return { stop: bonjourMock.stop }
+    }
+  },
+}))
+
+function runCli(args: string[], home: string, opts: { mockDiscovery?: boolean } = {}) {
+  const nodeArgs = ['--import', 'tsx']
+  if (opts.mockDiscovery) nodeArgs.push('--import', DISCOVERY_MOCK_REGISTER)
+  return spawnSync(process.execPath, [...nodeArgs, 'src/cli.ts', ...args], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -44,6 +83,42 @@ function assistantLine(sessionId: string, timestamp: string, messageId: string):
     },
   })
 }
+
+describe('sharing discovery', () => {
+  it('logs mDNS errors and returns devices found before the error', async () => {
+    vi.resetModules()
+    bonjourMock.destroy.mockClear()
+    bonjourMock.find.mockClear()
+    bonjourMock.mdnsOn.mockClear()
+    bonjourMock.stop.mockClear()
+    bonjourMock.serviceCallback = undefined
+    bonjourMock.errorCallback = undefined
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const { browse } = await import('../src/sharing/discovery.js')
+      const pending = browse(10_000)
+      bonjourMock.serviceCallback?.({
+        txt: { fp: 'fixture-fingerprint', dn: 'Fixture Mac' },
+        addresses: ['192.168.1.25'],
+        port: 7777,
+      })
+      bonjourMock.errorCallback?.(new Error('bind EPERM'))
+
+      await expect(pending).resolves.toEqual([
+        {
+          name: 'Fixture Mac',
+          host: '192.168.1.25',
+          port: 7777,
+          fingerprint: 'fixture-fingerprint',
+        },
+      ])
+      expect(stderr).toHaveBeenCalledWith('codeburn devices scan: mDNS discovery failed: bind EPERM')
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+})
 
 describe('devices/share/identity JSON CLI output', () => {
   it('devices --format json returns CombinedUsage with the local device', async () => {
@@ -109,21 +184,49 @@ describe('devices/share/identity JSON CLI output', () => {
     const home = await mkdtemp(join(tmpdir(), 'codeburn-devices-scan-json-'))
 
     try {
-      const result = runCli(['devices', 'scan', '--format', 'json'], home)
+      const result = runCli(['devices', 'scan', '--format', 'json'], home, { mockDiscovery: true })
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       const payload = JSON.parse(result.stdout) as {
         found: Array<{ name: string; host: string; port: number; fingerprint: string; code: string; paired: boolean }>
       }
-      expect(Array.isArray(payload.found)).toBe(true)
-      for (const device of payload.found) {
-        expect(typeof device.name).toBe('string')
-        expect(typeof device.host).toBe('string')
-        expect(typeof device.port).toBe('number')
-        expect(typeof device.fingerprint).toBe('string')
-        expect(typeof device.code).toBe('string')
-        expect(typeof device.paired).toBe('boolean')
-      }
+      expect(payload.found).toHaveLength(1)
+      expect(payload.found[0]).toMatchObject({
+        name: 'Fixture Mac',
+        host: 'fixture.local',
+        port: 7777,
+        fingerprint: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        paired: false,
+      })
+      expect(payload.found[0]?.code).toMatch(/^\d{3}$/)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('devices add --format json is rejected as a mutation', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-devices-add-json-'))
+
+    try {
+      const result = runCli(['devices', 'add', '--format', 'json'], home)
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toContain('--format json is only supported for read-only devices output and scan')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('share --format json is rejected without the status action', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-share-json-guard-'))
+
+    try {
+      const result = runCli(['share', '--format', 'json'], home)
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toContain('--format json is only supported for `share status`')
     } finally {
       await rm(home, { recursive: true, force: true })
     }

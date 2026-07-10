@@ -537,7 +537,7 @@ program
 
 program
   .command('share [action]')
-  .description("Securely share this device's usage with your other devices on the same network")
+  .description("Securely share this device's usage with your other devices. Actions: status. Supports --format json for status.")
   .option('--port <number>', 'Port to listen on', parseInteger, 7777)
   .option('--pair', 'Open a pairing window and print a PIN to add a new device')
   .option('--always', 'Keep sharing until stopped (default stops after 10 min idle)')
@@ -567,7 +567,7 @@ program
 
 program
   .command('devices [action] [target]')
-  .description('Combined usage across your devices. Actions: add (find nearby & pair) | add <host> --pin <pin> (manual) | rm <name>')
+  .description('Combined usage across your devices. Actions: scan | add (find nearby & pair) | add <host> --pin <pin> (manual) | rm <name>. Supports --format json for read-only output and scan.')
   .option('--pin <pin>', 'Pairing PIN shown on the device you are adding')
   .option('-p, --period <period>', 'Period: today, week, 30days, month, all', 'month')
   .option('--port <number>', 'Default port when adding a device', parseInteger, 7777)
@@ -1637,12 +1637,13 @@ program
 
     let range: DateRange
     if (opts.from || opts.to) {
-      const customRange = parseDateRangeFlags(opts.from, opts.to)
-      if (!customRange) {
-        process.stderr.write('codeburn: --from and --to must be valid YYYY-MM-DD dates\n')
+      try {
+        range = parseDateRangeFlags(opts.from, opts.to)!
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`\n  Error: ${message}\n`)
         process.exit(1)
       }
-      range = customRange
     } else {
       range = getDateRange(opts.period).range
     }

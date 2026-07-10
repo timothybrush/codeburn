@@ -180,11 +180,57 @@ describe('computeSpendFlow', () => {
 
     expect(flow.models).toHaveLength(9)
     expect(flow.projects).toHaveLength(9)
-    expect(flow.models.at(-1)).toMatchObject({ id: 'other', label: 'Other' })
-    expect(flow.projects.at(-1)).toMatchObject({ id: 'other', label: 'Other' })
+    expect(flow.models.at(-1)).toMatchObject({ id: '__other__', label: 'Other' })
+    expect(flow.projects.at(-1)).toMatchObject({ id: '__other__', label: 'Other' })
     expectTotalsReconcile(flow.models, sumLinksBy(flow.links, 'model'))
     expectTotalsReconcile(flow.projects, sumLinksBy(flow.links, 'project'))
     expect(flow.links.reduce((sum, link) => sum + link.cost, 0)).toBeCloseTo(expectedTotal, 10)
+  })
+
+  it('keeps real other nodes separate from the rollup bucket', async () => {
+    const { computeSpendFlow } = await import('../src/spend-flow.js')
+    const range: DateRange = {
+      start: new Date('2026-06-01T00:00:00.000Z'),
+      end: new Date('2026-06-30T23:59:59.999Z'),
+    }
+    parserMock.parseAllSessions.mockResolvedValueOnce([
+      project('other', [session('s-other', 'other', { other: 1000 })]),
+      ...Array.from({ length: 9 }, (_, index) => {
+        const n = index + 1
+        return project(`project-${n}`, [session(`s-${n}`, `project-${n}`, { [`model-${n}`]: 100 - n * 10 })])
+      }),
+    ])
+
+    const flow = await computeSpendFlow(range, 'all')
+
+    expect(flow.models).toContainEqual({ id: 'other', label: 'other', cost: 1000 })
+    expect(flow.models).toContainEqual({ id: '__other__', label: 'Other', cost: 30 })
+    expect(flow.projects).toContainEqual({ id: 'other', label: 'other', cost: 1000 })
+    expect(flow.projects).toContainEqual({ id: '__other__', label: 'Other', cost: 30 })
+    expect(flow.links).toContainEqual({ model: 'other', project: 'other', cost: 1000 })
+    expect(flow.links).toContainEqual({ model: '__other__', project: '__other__', cost: 30 })
+    expectTotalsReconcile(flow.models, sumLinksBy(flow.links, 'model'))
+    expectTotalsReconcile(flow.projects, sumLinksBy(flow.links, 'project'))
+  })
+
+  it('labels the period with local calendar dates', async () => {
+    const previousTz = process.env['TZ']
+    process.env['TZ'] = 'America/Los_Angeles'
+    try {
+      const { computeSpendFlow } = await import('../src/spend-flow.js')
+      const range: DateRange = {
+        start: new Date(2026, 6, 10, 0, 0, 0, 0),
+        end: new Date(2026, 6, 10, 23, 59, 59, 999),
+      }
+      parserMock.parseAllSessions.mockResolvedValueOnce([])
+
+      const flow = await computeSpendFlow(range, 'all')
+
+      expect(flow.period.label).toBe('2026-07-10 to 2026-07-10')
+    } finally {
+      if (previousTz === undefined) delete process.env['TZ']
+      else process.env['TZ'] = previousTz
+    }
   })
 })
 
@@ -218,6 +264,21 @@ describe('codeburn spend --format flow-json', () => {
       expect(payload.projects[0]?.id).toBe('app')
       expect(payload.links[0]).toMatchObject({ model: payload.models[0]?.id, project: 'app' })
       expect(payload.links[0]?.cost).toBeGreaterThan(0)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('prints a friendly error for invalid custom date flags', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-spend-flow-date-error-'))
+
+    try {
+      const result = runCli(['spend', '--format', 'flow-json', '--from', 'April 7'], home)
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toContain('Error: Invalid date format "April 7": expected YYYY-MM-DD')
+      expect(result.stderr).not.toContain('UsageQueryError')
     } finally {
       await rm(home, { recursive: true, force: true })
     }
