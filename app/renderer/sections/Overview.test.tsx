@@ -71,14 +71,17 @@ function makePayload(now: Date): MenubarPayload {
       cost: 312.4,
       calls: 4200,
       sessions: 88,
-      oneShotRate: null,
+      oneShotRate: 0.74,
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-      cacheHitPercent: 0,
+      cacheHitPercent: 63.4,
       codexCredits: 0,
-      topActivities: [],
+      topActivities: [
+        { name: 'coding', cost: 92.5, savingsUSD: 7.2, turns: 120, oneShotRate: 0.8 },
+        { name: 'debugging', cost: 41.25, savingsUSD: 2.1, turns: 64, oneShotRate: null },
+      ],
       topModels: [{ name: 'claude-opus-4', cost: 200, savingsUSD: 0, savingsBaselineModel: '', calls: 100 }],
       localModelSavings: { totalUSD: 0, calls: 0, byModel: [], byProvider: [] },
       providers: {},
@@ -151,6 +154,23 @@ describe('Overview', () => {
     expect(await screen.findByText('$312.40')).toBeInTheDocument()
     expect(screen.getByText('Last 30 days')).toBeInTheDocument()
     expect(container.querySelector('.ov-streak')).toHaveTextContent('30-day streak')
+
+    // The KPI strip surfaces the payload's previously hidden success/cache
+    // metrics, and the saved KPI remains backed by the ACT report poll.
+    const kpis = screen.getByLabelText('Key performance indicators')
+    expect(within(kpis).getByText('74%')).toBeInTheDocument()
+    expect(within(kpis).getByText('63%')).toBeInTheDocument()
+    expect(within(kpis).getByText('$84.20')).toBeInTheDocument()
+
+    // The contribution grid contains the real active history days, and the
+    // right rail renders real, cost-sorted activity data including one-shot.
+    const heatmap = screen.getByRole('grid', { name: 'Daily activity contribution heatmap' })
+    expect(heatmap.querySelectorAll('[data-active="true"]')).toHaveLength(30)
+    expect(screen.getByText('30 active days')).toBeInTheDocument()
+    expect(screen.getByText('coding')).toBeInTheDocument()
+    expect(screen.getByText('$92.50')).toBeInTheDocument()
+    expect(screen.getByText('120 turns')).toBeInTheDocument()
+    expect(screen.getByText('80% one-shot')).toBeInTheDocument()
 
     // Session row title = the session's project (topSessions has no title field).
     expect(screen.getByText('parser-service')).toBeInTheDocument()

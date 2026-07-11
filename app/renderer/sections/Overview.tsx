@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { CliErrorPanel } from '../components/CliErrorPanel'
+import { ActivityHeatmap } from '../components/ActivityHeatmap'
 import { ListRow, seriesColorForModel } from '../components/ListRow'
 import { Panel } from '../components/Panel'
 import { type Polled, usePolled } from '../hooks/usePolled'
@@ -350,6 +351,36 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
+function formatRate(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`
+}
+
+function TopActivities({ activities }: { activities: MenubarPayload['current']['topActivities'] }) {
+  const rows = [...activities].sort((a, b) => b.cost - a.cost).slice(0, 6)
+  if (!rows.length) return <EmptyNote>No activity in this range yet.</EmptyNote>
+  const maxCost = rows[0].cost
+
+  return (
+    <div className="ov-activities">
+      {rows.map(activity => (
+        <div className="ov-activity" key={activity.name}>
+          <div className="ov-activity-bar" aria-hidden="true">
+            <span style={{ width: `${maxCost > 0 ? activity.cost / maxCost * 100 : 0}%` }} />
+          </div>
+          <div className="ov-activity-main">
+            <span className="ov-activity-name">{activity.name}</span>
+            <strong>{formatUsd(activity.cost)}</strong>
+          </div>
+          <div className="ov-activity-meta">
+            <span>{activity.turns.toLocaleString('en-US')} turns</span>
+            <span>{formatRate(activity.oneShotRate)} one-shot</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function Overview({ period, provider }: { period: Period; provider: string }) {
   const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, provider), [period, provider])
   return <OverviewContent period={period} overview={overview} />
@@ -388,7 +419,16 @@ export function OverviewContent({
   const saved = actReport.data?.totals.realizedCostUSD ?? 0
   const applied = saved > 0 ? (actReport.data?.totals.measuredActions ?? 0) : 0
   return (
-    <>
+    <div className="ov-dashboard">
+      <div className="ov-kpis" aria-label="Key performance indicators">
+        <div className="ov-kpi"><span>Spend</span><strong>{formatUsd(data.current.cost)}</strong></div>
+        <div className="ov-kpi"><span>Calls</span><strong>{data.current.calls.toLocaleString('en-US')}</strong></div>
+        <div className="ov-kpi"><span>Sessions</span><strong>{data.current.sessions.toLocaleString('en-US')}</strong></div>
+        <div className="ov-kpi ov-kpi-primary"><span>One-shot</span><strong>{formatRate(data.current.oneShotRate)}</strong></div>
+        <div className="ov-kpi"><span>Cache hit</span><strong>{Math.round(data.current.cacheHitPercent)}%</strong></div>
+        <div className="ov-kpi ov-kpi-saved"><span>Saved</span><strong>{formatUsd(saved)}</strong><small>from {applied} applied fixes</small></div>
+      </div>
+
       <div className="ov-hero-row">
         <div className="ov-card ov-hero">
           <div className="ov-hero-top"><span className="ov-label">{data.current.label}</span><span className="ov-streak"><b>{streakDays(data.history.daily, now)}</b>-day streak</span></div>
@@ -409,29 +449,41 @@ export function OverviewContent({
       <div className="ov-stats3">
         <div className="ov-card ov-stat"><div className="ov-label">Month to date</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
         <div className="ov-card ov-stat"><div className="ov-label">Projected month</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
-        <div className="ov-card ov-stat"><div className="ov-label">Saved to date</div><div className="v" style={{ color: 'var(--ok)' }}>{formatUsd(saved)}</div><div className="d ok">from {applied} applied fixes</div></div>
       </div>
 
-      <div className="ov-card ov-panel">
-        <div className="ov-panel-head"><h3>Models this period</h3><span className="r">Sorted by cost</span></div>
-        <div className="ov-panel-body ov-model-panel"><ModelsTable models={models} /></div>
-      </div>
+      <div className="ov-body-grid">
+        <div className="ov-main-column">
+          <div className="ov-card ov-panel">
+            <div className="ov-panel-head"><h3>Models this period</h3><span className="r">Sorted by cost</span></div>
+            <div className="ov-panel-body ov-model-panel"><ModelsTable models={models} /></div>
+          </div>
 
-      <div className="ov-card ov-panel">
-        <div className="ov-panel-head"><h3>Daily spend</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
-        <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} /> : <EmptyNote>No spend yet.</EmptyNote>}</div>
-      </div>
+          <div className="ov-card ov-panel">
+            <div className="ov-panel-head"><h3>Daily spend</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
+            <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} /> : <EmptyNote>No spend yet.</EmptyNote>}</div>
+          </div>
+        </div>
 
-      <div className="ov-card ov-panel">
-        <div className="ov-panel-head"><h3>Most expensive sessions</h3><span className="r"><button className="ov-link" type="button">See all →</button></span></div>
-        <div className="ov-panel-body">
-          {data.current.topSessions.length ? data.current.topSessions.map((session, index) => {
-            const model = modelIndex.get(sessionModelKey(session.project, session.date, session.calls, session.cost))
-            const sub = [formatDay(session.date), model, `${session.calls} calls`].filter(Boolean).join(' · ')
-            return <ListRow key={`${session.project}-${session.date}-${index}`} no={String(index + 1).padStart(2, '0')} dotColor={seriesColorForModel(model)} title={session.project} sub={sub} value={formatUsd(session.cost)} />
-          }) : <EmptyNote>No sessions in this range.</EmptyNote>}
+        <div className="ov-side-column">
+          <div className="ov-card ov-panel">
+            <div className="ov-panel-head"><h3>Top activities</h3><span className="r">Sorted by cost</span></div>
+            <div className="ov-panel-body"><TopActivities activities={data.current.topActivities} /></div>
+          </div>
+
+          <div className="ov-card ov-panel">
+            <div className="ov-panel-head"><h3>Most expensive sessions</h3><span className="r"><button className="ov-link" type="button">See all →</button></span></div>
+            <div className="ov-panel-body">
+              {data.current.topSessions.length ? data.current.topSessions.map((session, index) => {
+                const model = modelIndex.get(sessionModelKey(session.project, session.date, session.calls, session.cost))
+                const sub = [formatDay(session.date), model, `${session.calls} calls`].filter(Boolean).join(' · ')
+                return <ListRow key={`${session.project}-${session.date}-${index}`} no={String(index + 1).padStart(2, '0')} dotColor={seriesColorForModel(model)} title={session.project} sub={sub} value={formatUsd(session.cost)} />
+              }) : <EmptyNote>No sessions in this range.</EmptyNote>}
+            </div>
+          </div>
         </div>
       </div>
-    </>
+
+      <ActivityHeatmap daily={data.history.daily} />
+    </div>
   )
 }
