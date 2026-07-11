@@ -1,21 +1,28 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
+import { SegTabs } from '../components/SegTabs'
 import { Stat } from '../components/Stat'
 import { usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatCompact, formatDayLong, formatDayShort, formatDuration, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { DateRange, Period, SessionRow } from '../lib/types'
 
-function fmtCompact(n: number): string {
-  if (n === 0) return '0'
-  if (n < 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: n >= 10_000_000 ? 1 : 2,
-  }).format(n)
-}
+export const INITIAL_VISIBLE = 120
+const STEP = 120
+
+type SessionSort = 'cost' | 'recent' | 'turns' | 'tokens'
+type SequenceEntry =
+  | { type: 'header'; provider: string; count: number; cost: number }
+  | { type: 'row'; row: SessionRow }
+
+const SORT_OPTIONS = [
+  { value: 'cost', label: 'Cost' },
+  { value: 'recent', label: 'Recent' },
+  { value: 'turns', label: 'Turns' },
+  { value: 'tokens', label: 'Tokens' },
+]
 
 function providerName(provider: string): string {
   return provider
@@ -25,15 +32,31 @@ function providerName(provider: string): string {
     .join(' ')
 }
 
-function durationLabel(durationMs: number): string {
-  const minutes = Math.round(durationMs / 60_000)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
+function endedAtTime(row: SessionRow): number {
+  const time = new Date(row.endedAt).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+function compareRows(sort: SessionSort, a: SessionRow, b: SessionRow): number {
+  if (sort === 'cost') return b.cost - a.cost
+  if (sort === 'turns') return b.turns - a.turns
+  if (sort === 'tokens') {
+    return (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens)
+  }
+  return endedAtTime(b) - endedAtTime(a)
+}
+
+function groupSortValue(sort: SessionSort, rows: SessionRow[]): number {
+  if (sort === 'cost') return rows.reduce((sum, row) => sum + row.cost, 0)
+  if (sort === 'turns') return rows.reduce((sum, row) => sum + row.turns, 0)
+  if (sort === 'tokens') {
+    return rows.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0)
+  }
+  return rows.reduce((latest, row) => Math.max(latest, endedAtTime(row)), 0)
 }
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
-  return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
+  return <p style={{ color: 'var(--mut)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
 export function Sessions({
@@ -47,11 +70,72 @@ export function Sessions({
   range?: DateRange | null
   refreshToken?: number
 }) {
-  const [selected, setSelected] = useState<SessionRow | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<SessionSort>('cost')
+  const [grouped, setGrouped] = useState(true)
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE)
   const report = usePolled<SessionRow[]>(
     () => range ? codeburn.getSessions(period, provider, range) : codeburn.getSessions(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
   )
+  const rows = report.data ?? []
+  const selected = rows.find(row => row.sessionId === selectedId) ?? null
+  const q = query.trim().toLowerCase()
+  const filtered = rows.filter(row => q === '' || [
+    row.project,
+    row.sessionId,
+    row.models.join(' '),
+  ].some(value => value.toLowerCase().includes(q)))
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_VISIBLE)
+  }, [query, sort, grouped, report.data])
+
+  const sequence = useMemo<SequenceEntry[]>(() => {
+    if (!grouped) {
+      return [...filtered]
+        .sort((a, b) => compareRows(sort, a, b))
+        .map(row => ({ type: 'row' as const, row }))
+    }
+
+    const byProvider = filtered.reduce((map, row) => {
+      const providerRows = map.get(row.provider) ?? []
+      providerRows.push(row)
+      map.set(row.provider, providerRows)
+      return map
+    }, new Map<string, SessionRow[]>())
+
+    return [...byProvider.entries()]
+      .map(([providerName, providerRows]) => ({
+        provider: providerName,
+        rows: [...providerRows].sort((a, b) => compareRows(sort, a, b)),
+        cost: providerRows.reduce((sum, row) => sum + row.cost, 0),
+        sortValue: groupSortValue(sort, providerRows),
+      }))
+      .sort((a, b) => b.sortValue - a.sortValue || a.provider.localeCompare(b.provider))
+      .flatMap(group => [
+        { type: 'header' as const, provider: group.provider, count: group.rows.length, cost: group.cost },
+        ...group.rows.map(row => ({ type: 'row' as const, row })),
+      ])
+  }, [filtered, grouped, sort])
+
+  const renderedSequence: SequenceEntry[] = []
+  let renderedRows = 0
+  let pendingHeader: SequenceEntry | null = null
+  for (const entry of sequence) {
+    if (entry.type === 'header') {
+      pendingHeader = entry
+      continue
+    }
+    if (renderedRows >= visibleCount) break
+    if (pendingHeader) {
+      renderedSequence.push(pendingHeader)
+      pendingHeader = null
+    }
+    renderedSequence.push(entry)
+    renderedRows++
+  }
 
   if (!report.data) {
     if (report.error) return <CliErrorPanel error={report.error} subject="sessions" />
@@ -62,7 +146,7 @@ export function Sessions({
     )
   }
 
-  if (selected) return <SessionDetail session={selected} onBack={() => setSelected(null)} />
+  if (selected) return <SessionDetail session={selected} onBack={() => setSelectedId(null)} />
 
   if (!report.data.length) {
     return (
@@ -72,74 +156,114 @@ export function Sessions({
     )
   }
 
-  const grouped = report.data.reduce((map, row) => {
-    const rows = map.get(row.provider) ?? []
-    rows.push(row)
-    map.set(row.provider, rows)
-    return map
-  }, new Map<string, SessionRow[]>())
-  const groups = [...grouped.entries()]
-    .map(([name, rows]) => ({
-      name,
-      rows: [...rows].sort((a, b) => b.cost - a.cost),
-      cost: rows.reduce((sum, row) => sum + row.cost, 0),
-    }))
-    .sort((a, b) => b.cost - a.cost)
+  const totalCost = filtered.reduce((sum, row) => sum + row.cost, 0)
+  const totalTokens = filtered.reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0)
+  const remaining = filtered.length - renderedRows
 
   return (
     <div className="sessions-list-view">
-      <div className="session-list">
-        {groups.map(group => (
-          <div className="session-provider" key={group.name}>
-            <div className="provider-h">
-              {providerName(group.name)} · {group.rows.length.toLocaleString('en-US')} {group.rows.length === 1 ? 'session' : 'sessions'} · {formatUsd(group.cost)}
-            </div>
-            {group.rows.map(row => (
-              <button className="session-row" key={row.sessionId} type="button" onClick={() => setSelected(row)}>
+      <div className="sessions-toolbar">
+        <input
+          className="sessions-search"
+          aria-label="Search sessions"
+          placeholder="Search project, model, or id…"
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+        />
+        <SegTabs
+          options={SORT_OPTIONS}
+          value={sort}
+          onChange={value => setSort(value as SessionSort)}
+        />
+        <button
+          className="sessions-toggle"
+          type="button"
+          aria-pressed={grouped}
+          onClick={() => setGrouped(value => !value)}
+        >
+          Group by provider
+        </button>
+      </div>
+      <div className="sessions-summary">
+        {filtered.length} sessions · {formatUsd(totalCost)} · {formatCompact(totalTokens)} tokens
+      </div>
+      {filtered.length === 0 ? (
+        <div className="sessions-empty">
+          <EmptyNote>No sessions match &quot;{query}&quot;.</EmptyNote>
+          <button className="sessions-clear" type="button" onClick={() => setQuery('')}>Clear search</button>
+        </div>
+      ) : (
+        <>
+          <div className="session-list">
+            {renderedSequence.map(entry => entry.type === 'header' ? (
+              <div className="provider-h" key={`provider-${entry.provider}`}>
+                {providerName(entry.provider)} · {entry.count.toLocaleString('en-US')} sessions · {formatUsd(entry.cost)}
+              </div>
+            ) : (
+              <button
+                className="session-row"
+                key={entry.row.sessionId}
+                type="button"
+                onClick={() => setSelectedId(entry.row.sessionId)}
+              >
                 <span className="session-primary">
-                  <span className="session-title">{row.project}</span>
-                  <span className="session-project">{String(row.sessionId).slice(0, 18)}</span>
+                  <span className="session-title">{entry.row.project}</span>
+                  <span className="session-project">{entry.row.sessionId.slice(0, 18)}</span>
                 </span>
                 <span className="session-meta">
-                  <span>{row.models.join(', ')}</span>
-                  <span>{row.turns} turns</span>
-                  <span>{formatUsd(row.cost)}</span>
-                  <span>{fmtCompact(row.inputTokens + row.outputTokens)} tok</span>
+                  <span className="session-when">{formatDayShort(entry.row.endedAt)}</span>
+                  <span>{entry.row.models.join(', ')}</span>
+                  <span>{entry.row.turns} turns</span>
+                  <span>{formatUsd(entry.row.cost)}</span>
+                  <span>{formatCompact(entry.row.inputTokens + entry.row.outputTokens)} tok</span>
                 </span>
               </button>
             ))}
           </div>
-        ))}
-      </div>
+          <div className="sessions-more-caption">Showing {renderedRows} of {filtered.length}</div>
+          {remaining > 0 && (
+            <button className="sessions-more" type="button" onClick={() => setVisibleCount(value => value + STEP)}>
+              Show {Math.min(STEP, remaining)} more · {remaining} remaining
+            </button>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
 function SessionDetail({ session, onBack }: { session: SessionRow; onBack: () => void }) {
   const cacheTotal = session.inputTokens + session.cacheReadTokens
-  const cacheHit = cacheTotal > 0 ? `${Math.round(session.cacheReadTokens / cacheTotal * 100)}% hit` : '—'
+  const cacheHit = cacheTotal > 0 ? Math.round(session.cacheReadTokens / cacheTotal * 100) : 0
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onBack()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onBack])
 
   return (
     <div className="session-detail">
       <button className="back-link" type="button" onClick={onBack}>← Back to sessions</button>
       <div className="panel detail-head">
         <h3 className="detail-title">{session.project}</h3>
+        <div className="detail-line">{session.provider} · {session.models.join(', ')}</div>
         <div className="detail-line">
-          {session.provider} · {session.models.join(', ')} · {new Date(session.startedAt).toLocaleDateString()} · {formatUsd(session.cost)} · {session.turns} turns
+          {formatDayLong(session.startedAt)} → {formatDayLong(session.endedAt)} · {formatDuration(session.durationMs)}
         </div>
       </div>
       <div className="stats">
         <Stat label="Cost" value={formatUsd(session.cost)} delta="this session" />
-        <Stat label="Input" value={fmtCompact(session.inputTokens)} delta="tokens sent" />
-        <Stat label="Output" value={fmtCompact(session.outputTokens)} delta="tokens generated" />
-        <Stat label="Cache read" value={fmtCompact(session.cacheReadTokens)} delta={cacheHit} />
+        <Stat label="Calls" value={session.calls.toLocaleString()} delta="API calls" />
+        <Stat label="Turns" value={session.turns.toLocaleString()} delta="assistant turns" />
+        <Stat label="Saved" value={formatUsd(session.savingsUSD)} delta="vs baseline" />
+        <Stat label="Input" value={formatCompact(session.inputTokens)} delta="tokens sent" />
+        <Stat label="Output" value={formatCompact(session.outputTokens)} delta="tokens generated" />
+        <Stat label="Cache read" value={formatCompact(session.cacheReadTokens)} delta={`${cacheHit}% hit`} />
+        <Stat label="Cache write" value={formatCompact(session.cacheWriteTokens)} delta="tokens cached" />
       </div>
-      {(session.savingsUSD > 0 || session.durationMs > 0) && (
-        <div className="session-detail-notes">
-          {session.savingsUSD > 0 && <span>Saved {formatUsd(session.savingsUSD)} vs baseline</span>}
-          {session.durationMs > 0 && <span>Duration {durationLabel(session.durationMs)}</span>}
-        </div>
-      )}
     </div>
   )
 }

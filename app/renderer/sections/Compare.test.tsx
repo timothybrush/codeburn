@@ -68,7 +68,7 @@ describe('Compare', () => {
     expect(screen.getByText('$0.03')).toHaveClass('cmp-best')
     expect(screen.getByText('$331.20')).toBeInTheDocument()
     expect(screen.getByText('152.6M')).toBeInTheDocument()
-    expect(screen.getByText('9.64M')).toBeInTheDocument()
+    expect(screen.getByText('9.6M')).toBeInTheDocument()
 
     const context = screen.getByText('Context').closest<HTMLElement>('.cmp-card')!
     expect(within(context).getByText('Cache hit rate')).toBeInTheDocument()

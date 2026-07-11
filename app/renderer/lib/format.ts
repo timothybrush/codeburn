@@ -1,3 +1,41 @@
 export function formatUsd(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+
+/** Compact token/count formatting: 1_842 → "1.8K", 184_000 → "184K", 1_200_000 → "1.2M". */
+export function formatCompact(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0) return '0'
+  const abs = Math.abs(n)
+  if (abs < 1_000) return String(Math.round(n))
+  if (abs < 1_000_000) return `${trim(n / 1_000)}K`
+  if (abs < 1_000_000_000) return `${trim(n / 1_000_000)}M`
+  return `${trim(n / 1_000_000_000)}B`
+}
+
+// One decimal, but drop a trailing ".0" (184.0K → "184K", 1.2K stays "1.2K").
+function trim(v: number): string {
+  const s = v.toFixed(1)
+  return s.endsWith('.0') ? s.slice(0, -2) : s
+}
+
+/** "Jul 10" — short month + day, no year. */
+export function formatDayShort(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+/** "Jul 10, 2026" — full date. */
+export function formatDayLong(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** "2h 14m" / "47m" / "38s" from a duration in ms. */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—'
+  const totalMin = Math.round(ms / 60_000)
+  if (totalMin < 1) return `${Math.round(ms / 1000)}s`
+  if (totalMin < 60) return `${totalMin}m`
+  return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`
+}

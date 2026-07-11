@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SessionRow } from '../lib/types'
-import { Sessions } from './Sessions'
+import { INITIAL_VISIBLE, Sessions } from './Sessions'
 
 const { getSessions } = vi.hoisted(() => ({
   getSessions: vi.fn<(period: string, provider: string) => Promise<SessionRow[]>>(),
@@ -13,8 +14,26 @@ vi.mock('../lib/ipc', async orig => {
   return { ...actual, codeburn: { getSessions } }
 })
 
+function session(overrides: Partial<SessionRow> & Pick<SessionRow, 'sessionId' | 'project' | 'provider'>): SessionRow {
+  return {
+    models: ['Default model'],
+    cost: 0,
+    savingsUSD: 0,
+    calls: 1,
+    turns: 1,
+    inputTokens: 1_000,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    startedAt: '2026-07-01T10:00:00.000Z',
+    endedAt: '2026-07-01T10:01:00.000Z',
+    durationMs: 60_000,
+    ...overrides,
+  }
+}
+
 const rows: SessionRow[] = [
-  {
+  session({
     sessionId: 'claude-session-123456789',
     project: 'codeburn',
     provider: 'claude',
@@ -30,51 +49,171 @@ const rows: SessionRow[] = [
     startedAt: '2026-07-11T10:00:00.000Z',
     endedAt: '2026-07-11T11:35:00.000Z',
     durationMs: 5_700_000,
-  },
-  {
+  }),
+  session({
     sessionId: 'codex-session-987654321',
     project: 'client-api',
     provider: 'codex',
     models: ['GPT-5.5 Codex'],
     cost: 3.92,
-    savingsUSD: 0,
     calls: 25,
     turns: 22,
     inputTokens: 120_000,
     outputTokens: 16_000,
     cacheReadTokens: 40_000,
     cacheWriteTokens: 4_000,
-    startedAt: '2026-07-10T10:00:00.000Z',
     endedAt: '2026-07-10T10:30:00.000Z',
     durationMs: 1_800_000,
-  },
+  }),
+  session({
+    sessionId: 'claude-alpha-session',
+    project: 'alpha-worker',
+    provider: 'claude',
+    models: ['Haiku 4.5'],
+    cost: 1.10,
+    turns: 80,
+    inputTokens: 45_000,
+    outputTokens: 5_000,
+    endedAt: '2026-07-09T08:00:00.000Z',
+  }),
+  session({
+    sessionId: 'codex-zeta-session',
+    project: 'zeta-search',
+    provider: 'codex',
+    models: ['GPT-5.5 Codex'],
+    cost: 6,
+    turns: 10,
+    inputTokens: 1_900_000,
+    outputTokens: 100_000,
+    endedAt: '2026-07-12T08:00:00.000Z',
+  }),
+  session({
+    sessionId: 'claude-docs-session',
+    project: 'docs-site',
+    provider: 'claude',
+    models: ['Sonnet 4.6'],
+    cost: 0.50,
+    turns: 5,
+    inputTokens: 8_000,
+    outputTokens: 2_000,
+    endedAt: '2026-07-08T08:00:00.000Z',
+  }),
+  session({
+    sessionId: 'codex-tools-session',
+    project: 'tools-service',
+    provider: 'codex',
+    models: ['GPT-5.4 Mini'],
+    cost: 2,
+    turns: 30,
+    inputTokens: 450_000,
+    outputTokens: 50_000,
+    endedAt: '2026-07-07T08:00:00.000Z',
+  }),
 ]
 
 describe('Sessions', () => {
   beforeEach(() => getSessions.mockReset())
 
-  it('groups real rows by provider and opens the four-stat detail', async () => {
+  it('shows a summary of every filtered session and groups providers', async () => {
     getSessions.mockResolvedValue(rows)
     const { container } = render(<Sessions period="30days" provider="all" />)
 
-    expect(await screen.findByText('Claude · 1 session · $8.41')).toBeInTheDocument()
-    expect(screen.getByText('Codex · 1 session · $3.92')).toBeInTheDocument()
+    expect(await screen.findByText('6 sessions · $21.93 · 4.2M tokens')).toBeInTheDocument()
+    expect(screen.getByText('Claude · 3 sessions · $10.01')).toBeInTheDocument()
+    expect(screen.getByText('Codex · 3 sessions · $11.92')).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(6)
+  })
+
+  it('filters by project and offers to clear a search with no matches', async () => {
+    const user = userEvent.setup()
+    getSessions.mockResolvedValue(rows)
+    const { container } = render(<Sessions period="30days" provider="all" />)
+    const search = await screen.findByRole('textbox', { name: 'Search sessions' })
+
+    await user.type(search, 'codeb')
+    expect(screen.getByText('1 sessions · $8.41 · 1.5M tokens')).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(1)
     expect(screen.getByText('codeburn')).toBeInTheDocument()
-    expect(screen.getByText('client-api')).toBeInTheDocument()
-    expect(screen.getByText('$8.41')).toBeInTheDocument()
-    expect(screen.getByText('$3.92')).toBeInTheDocument()
-    expect(screen.getByText('claude-session-123')).toBeInTheDocument()
+    expect(screen.queryByText('client-api')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /codeburn/ }))
+    await user.clear(search)
+    await user.type(search, 'nothing-here')
+    expect(screen.getByText('No sessions match "nothing-here".')).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(0)
 
-    expect(await screen.findByRole('button', { name: '← Back to sessions' })).toBeInTheDocument()
-    expect(container.querySelectorAll('.stat')).toHaveLength(4)
-    for (const label of ['Cost', 'Input', 'Output', 'Cache read']) {
+    await user.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(screen.getByText('6 sessions · $21.93 · 4.2M tokens')).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(6)
+  })
+
+  it('reorders rows when the sort changes', async () => {
+    const user = userEvent.setup()
+    getSessions.mockResolvedValue(rows)
+    const { container } = render(<Sessions period="30days" provider="all" />)
+    await screen.findByText('6 sessions · $21.93 · 4.2M tokens')
+
+    expect(container.querySelector('.session-row .session-title')).toHaveTextContent('zeta-search')
+    await user.click(screen.getByRole('button', { name: 'Turns' }))
+    expect(container.querySelector('.session-row .session-title')).toHaveTextContent('alpha-worker')
+  })
+
+  it('turns provider grouping off and back on', async () => {
+    const user = userEvent.setup()
+    getSessions.mockResolvedValue(rows)
+    const { container } = render(<Sessions period="30days" provider="all" />)
+    const toggle = await screen.findByRole('button', { name: 'Group by provider' })
+
+    expect(container.querySelectorAll('.provider-h')).toHaveLength(2)
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(container.querySelectorAll('.provider-h')).toHaveLength(0)
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(container.querySelectorAll('.provider-h')).toHaveLength(2)
+  })
+
+  it('caps a large list and reveals the remaining rows without another fetch', async () => {
+    const user = userEvent.setup()
+    const largeRows = Array.from({ length: INITIAL_VISIBLE + 5 }, (_, index) => session({
+      sessionId: `session-${index}`,
+      project: `project-${index}`,
+      provider: 'codex',
+      cost: INITIAL_VISIBLE + 5 - index,
+    }))
+    getSessions.mockResolvedValue(largeRows)
+    const { container } = render(<Sessions period="30days" provider="all" />)
+
+    expect(await screen.findByText(`Showing ${INITIAL_VISIBLE} of ${INITIAL_VISIBLE + 5}`)).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(INITIAL_VISIBLE)
+    await user.click(screen.getByRole('button', { name: 'Show 5 more · 5 remaining' }))
+    expect(screen.getByText(`Showing ${INITIAL_VISIBLE + 5} of ${INITIAL_VISIBLE + 5}`)).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(INITIAL_VISIBLE + 5)
+    expect(screen.queryByRole('button', { name: /remaining/ })).not.toBeInTheDocument()
+    expect(getSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the live eight-stat detail and returns to the list with Escape', async () => {
+    const user = userEvent.setup()
+    getSessions.mockResolvedValue(rows)
+    const { container } = render(<Sessions period="30days" provider="all" />)
+    await screen.findByText('6 sessions · $21.93 · 4.2M tokens')
+
+    await user.click(screen.getByRole('button', { name: /codeburn/ }))
+
+    expect(screen.getByRole('button', { name: '← Back to sessions' })).toBeInTheDocument()
+    expect(screen.getByText('claude · Opus 4.8')).toBeInTheDocument()
+    expect(screen.getByText(/Jul 11, 2026 → Jul 11, 2026 · 1h 35m/)).toBeInTheDocument()
+    expect(container.querySelectorAll('.stat')).toHaveLength(8)
+    for (const label of ['Cost', 'Calls', 'Turns', 'Saved', 'Input', 'Output', 'Cache read', 'Cache write']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
-    expect(screen.getByText('Saved $1.25 vs baseline')).toBeInTheDocument()
-    expect(screen.getByText('Duration 1h 35m')).toBeInTheDocument()
+    expect(screen.getByText('44')).toBeInTheDocument()
+    expect(screen.getByText('44% hit')).toBeInTheDocument()
     expect(screen.queryByText('Context window')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(await screen.findByText('6 sessions · $21.93 · 4.2M tokens')).toBeInTheDocument()
+    expect(container.querySelectorAll('.session-row')).toHaveLength(6)
   })
 
   it('renders the honest empty state', async () => {

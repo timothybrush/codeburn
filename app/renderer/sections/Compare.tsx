@@ -3,18 +3,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
 import { usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { CompareJsonReport, ComparisonRow, ModelStats, Period, WorkingStyleRow } from '../lib/types'
-
-function fmtCompact(n: number): string {
-  if (n === 0) return '0'
-  if (n < 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: n >= 10_000_000 ? 1 : 2,
-  }).format(n)
-}
 
 function fmtMetric(v: number | null, fn: 'cost' | 'number' | 'percent' | 'decimal'): string {
   if (v === null) return '—'
@@ -254,8 +245,8 @@ function ContextCard({ modelA, modelB }: { modelA: ModelStats; modelB: ModelStat
   const rows = [
     ['Calls', modelA.calls.toLocaleString(), modelB.calls.toLocaleString()],
     ['Total cost', formatUsd(modelA.cost), formatUsd(modelB.cost)],
-    ['Input tokens', fmtCompact(modelA.inputTokens), fmtCompact(modelB.inputTokens)],
-    ['Output tokens', fmtCompact(modelA.outputTokens), fmtCompact(modelB.outputTokens)],
+    ['Input tokens', formatCompact(modelA.inputTokens), formatCompact(modelB.inputTokens)],
+    ['Output tokens', formatCompact(modelA.outputTokens), formatCompact(modelB.outputTokens)],
     ['Edit turns', modelA.editTurns.toLocaleString(), modelB.editTurns.toLocaleString()],
     ['Self-corrections', modelA.selfCorrections.toLocaleString(), modelB.selfCorrections.toLocaleString()],
     ['Cache hit rate', cacheHitRate(modelA), cacheHitRate(modelB)],
