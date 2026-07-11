@@ -3,12 +3,13 @@ import { describe, it, expect, vi } from 'vitest'
 
 // Stub electron so importing main.ts does not require an Electron runtime.
 vi.mock('electron', () => ({
-  app: { whenReady: () => Promise.resolve(), on: () => {}, quit: () => {} },
+  app: { name: 'CodeBurn', whenReady: () => Promise.resolve(), on: () => {}, quit: () => {} },
   BrowserWindow: class {},
   ipcMain: { handle: () => {} },
+  Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
 }))
 
-import { createBridgeHandlers } from './main'
+import { createApplicationMenuTemplate, createBridgeHandlers } from './main'
 import { CliError } from './cli'
 
 function fakeSpawn(result: unknown = { current: { cost: 12.34 } }) {
@@ -48,6 +49,13 @@ const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = 
   { channel: 'codeburn:getShareStatus', args: [], argv: ['share', 'status', '--format', 'json'] },
   { channel: 'codeburn:getIdentity', args: [], argv: ['identity', '--format', 'json'] },
 ]
+
+function flattenMenuItems(items: any[]): any[] {
+  return items.flatMap(item => {
+    const submenu = Array.isArray(item.submenu) ? flattenMenuItems(item.submenu) : []
+    return [item, ...submenu]
+  })
+}
 
 describe('createBridgeHandlers (channel → argv for all channels)', () => {
   it('exposes exactly the ten codeburn:* channels', () => {
@@ -104,5 +112,31 @@ describe('createBridgeHandlers (IPC wiring)', () => {
     })
     const res = await handlers['codeburn:cliStatus']!()
     expect(res).toEqual({ ok: true, value: { found: true, path: '/opt/homebrew/bin/codeburn' } })
+  })
+})
+
+describe('createApplicationMenuTemplate', () => {
+  it('keeps normal app roles while leaving CmdOrCtrl+R for renderer refresh', () => {
+    const items = flattenMenuItems(createApplicationMenuTemplate(false))
+    const roles = items.map(item => item.role).filter(Boolean)
+    const accelerators = items.map(item => item.accelerator).filter(Boolean)
+
+    expect(roles).toContain('copy')
+    expect(roles).toContain('paste')
+    expect(roles).toContain('quit')
+    expect(roles).toContain('minimize')
+    expect(roles).toContain('close')
+    expect(roles).not.toContain('reload')
+    expect(roles).not.toContain('forceReload')
+    expect(accelerators).not.toContain('CmdOrCtrl+R')
+    expect(accelerators).not.toContain('CommandOrControl+R')
+  })
+
+  it('keeps DevTools available in dev without adding reload menu items', () => {
+    const roles = flattenMenuItems(createApplicationMenuTemplate(true)).map(item => item.role).filter(Boolean)
+
+    expect(roles).toContain('toggleDevTools')
+    expect(roles).not.toContain('reload')
+    expect(roles).not.toContain('forceReload')
   })
 })

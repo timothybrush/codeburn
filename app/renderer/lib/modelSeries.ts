@@ -9,10 +9,10 @@ export const SERIES_HEX = {
 export type SeriesKey = keyof typeof SERIES_HEX
 
 export const SERIES_LABELS: Record<SeriesKey, string> = {
-  opus: 'Opus 4.8',
-  sonnet: 'Sonnet 5',
-  haiku: 'Haiku 4.5',
-  gpt: 'GPT-5.5 Codex',
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku',
+  gpt: 'GPT / Codex',
   other: 'Other',
 }
 

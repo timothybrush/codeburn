@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MenubarPayload, YieldJsonReport } from '../lib/types'
-import { Optimize } from './Optimize'
+import { Optimize, OptimizeContent } from './Optimize'
 
 const { getOverview, getYield } = vi.hoisted(() => ({
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
@@ -200,5 +200,29 @@ describe('Optimize', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Abandoned $0.00' }))
     expect(screen.getByText('No abandoned sessions in this range yet.')).toBeInTheDocument()
+  })
+
+  it('keeps last-good yield totals and rows visible during revalidation', async () => {
+    getYield.mockResolvedValueOnce(makeYield()).mockImplementation(() => new Promise<YieldJsonReport>(() => {}))
+    const overview = {
+      data: makePayload(),
+      error: null,
+      loading: false,
+      lastSuccessAt: Date.now(),
+      refresh: vi.fn(),
+    }
+
+    const { rerender } = render(<OptimizeContent period="30days" overview={overview} refreshToken={0} />)
+
+    expect(await screen.findByRole('button', { name: 'Reverts $107.00' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Reverts $107.00' }))
+    expect(screen.getByText('codeburn')).toBeInTheDocument()
+
+    rerender(<OptimizeContent period="30days" overview={overview} refreshToken={1} />)
+    await waitFor(() => expect(getYield).toHaveBeenCalledTimes(2))
+
+    expect(screen.getByRole('button', { name: 'Reverts $107.00' })).toBeInTheDocument()
+    expect(screen.getByText('codeburn')).toBeInTheDocument()
+    expect(screen.queryByText('—')).not.toBeInTheDocument()
   })
 })

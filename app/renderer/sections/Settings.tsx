@@ -46,7 +46,13 @@ export function Settings({ period, refreshToken = 0 }: { period: Period; refresh
           <PairedPanel devices={devices} period={period} />
         </div>
       </div>
-      <Hint items={[{ k: 'esc', label: 'Back' }]} right="pairing uses mutual TLS · approve-style, no PIN" />
+      <Hint
+        items={[
+          { k: '⌘1-5', label: 'Navigate' },
+          { k: '⌘R', label: 'Refresh' },
+        ]}
+        right="pairing uses mutual TLS · approve-style, no PIN"
+      />
     </>
   )
 }

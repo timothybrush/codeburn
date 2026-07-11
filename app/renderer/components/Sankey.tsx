@@ -146,11 +146,6 @@ function round(n: number): number {
 
 function modelDisplayLabel(raw: string): string {
   const value = raw.trim()
-  const lower = value.toLowerCase()
-  if (lower.includes('opus')) return 'Opus 4.8'
-  if (lower.includes('sonnet')) return 'Sonnet 5'
-  if (lower.includes('haiku')) return 'Haiku 4.5'
-  if (lower.includes('gpt') || lower.includes('codex')) return 'GPT-5.5 Codex'
   return ellipsize(shortenId(value), 18)
 }
 

@@ -253,7 +253,15 @@ describe('Spend', () => {
     expect(container.querySelector('.sbars .s-hai')).toBeInTheDocument()
     expect(container.querySelector('.sbars .s-gpt')).toBeInTheDocument()
     expect(container.querySelector('.sbars .s-other')).toBeInTheDocument()
+    expect(screen.getByText('Opus')).toBeInTheDocument()
+    expect(screen.getByText('Sonnet')).toBeInTheDocument()
+    expect(screen.getByText('Haiku')).toBeInTheDocument()
+    expect(screen.getByText('GPT / Codex')).toBeInTheDocument()
     expect(screen.getByText('Other')).toBeInTheDocument()
+    expect(screen.queryByText('Opus 4.8')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sonnet 5')).not.toBeInTheDocument()
+    expect(screen.queryByText('Haiku 4.5')).not.toBeInTheDocument()
+    expect(screen.queryByText('GPT-5.5 Codex')).not.toBeInTheDocument()
   })
 
   it('renders Sankey ribbons with model gradients, neutral other nodes, and shortened labels', async () => {
@@ -262,7 +270,10 @@ describe('Spend', () => {
 
     const { container } = render(<Spend period="week" provider="all" />)
 
-    expect(await screen.findAllByText(/Opus 4.8/)).toHaveLength(2)
+    expect(await screen.findByText(/opus-4-20260701/)).toBeInTheDocument()
+    expect(screen.getByText(/gpt-5.5-codex/)).toBeInTheDocument()
+    expect(screen.queryByText(/Opus 4.8/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/GPT-5.5 Codex/)).not.toBeInTheDocument()
     expect(screen.getByText(/mobile-app/)).toBeInTheDocument()
     expect(screen.queryByText(/Users\/me\/src\/mobile-app/)).not.toBeInTheDocument()
 

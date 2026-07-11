@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { ProviderPop } from './ProviderPop'
 import { SegTabs, type SegOption } from './SegTabs'
 
-/** Full period vocabulary per the wireframe. 6M/Custom (date ranges) land in T8. */
+/** Full period vocabulary per the wireframe. 6M/Custom are M2 no-ops for now. */
 export const PERIOD_OPTIONS: SegOption[] = [
   { value: 'today', label: 'Today' },
   { value: 'week', label: '7D' },

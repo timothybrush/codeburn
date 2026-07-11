@@ -40,7 +40,7 @@ export function OptimizeContent({
     )
   }
 
-  const yieldData = !yieldReport.loading && !yieldReport.error ? yieldReport.data : null
+  const yieldData = yieldReport.error ? null : yieldReport.data
   const revertedTotal = yieldData ? formatUsd(yieldData.summary.reverted.costUSD) : '—'
   const abandonedTotal = yieldData ? formatUsd(yieldData.summary.abandoned.costUSD) : '—'
   const options = [
@@ -103,8 +103,7 @@ function YieldRows({
   category: SessionYieldJson['category']
   empty: string
 }) {
-  if (report.loading || report.error) return <EmptyNote>—</EmptyNote>
-  if (!report.data) return <EmptyNote>{empty}</EmptyNote>
+  if (report.error || !report.data) return <EmptyNote>—</EmptyNote>
 
   const rows = report.data.details.filter(row => row.category === category)
   if (!rows.length) return <EmptyNote>{empty}</EmptyNote>

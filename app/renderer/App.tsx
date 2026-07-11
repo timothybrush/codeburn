@@ -145,8 +145,9 @@ export function App() {
         {section !== 'settings' && (
           <Hint
             items={[
-              { k: '⌘K', label: 'Command' },
-              { k: '⌘E', label: 'Export view' },
+              { k: '⌘1-5', label: 'Navigate' },
+              { k: '⌘,', label: 'Settings' },
+              { k: '⌘R', label: 'Refresh' },
             ]}
             right={refreshedLabel(overview.lastSuccessAt, overview.loading, now)}
           />

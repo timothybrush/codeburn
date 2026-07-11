@@ -80,6 +80,36 @@ describe('App shortcuts', () => {
     for (const mock of Object.values(mocks)) mock.mockReset()
     mocks.getOverview.mockResolvedValue(overviewPayload())
     mocks.getSpendFlow.mockResolvedValue({ period: { label: 'Last 30 days', start: '', end: '' }, models: [], projects: [], links: [] })
+    mocks.getModels.mockResolvedValue([])
+    mocks.getPlans.mockResolvedValue({})
+    mocks.getYield.mockResolvedValue({
+      period: { label: 'Last 30 days', start: '', end: '' },
+      summary: {
+        productive: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        reverted: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        abandoned: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        total: { costUSD: 0, sessions: 0 },
+        productiveToRevertedCostRatio: null,
+      },
+      details: [],
+    })
+    mocks.getIdentity.mockResolvedValue({ name: 'CodeBurn Mac', fingerprint: 'AA:BB:CC' })
+    mocks.getDevicesScan.mockResolvedValue({ found: [] })
+    mocks.getDevices.mockResolvedValue({
+      perDevice: [],
+      combined: {
+        cost: 0,
+        calls: 0,
+        sessions: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 0,
+        totalTokens: 0,
+        deviceCount: 1,
+        reachableCount: 1,
+      },
+    })
   })
 
   it('switches sections with command-number shortcuts', async () => {
@@ -90,6 +120,37 @@ describe('App shortcuts', () => {
     fireEvent.keyDown(document, { key: '2', metaKey: true })
 
     expect(await screen.findByText('Cost flow · model → project')).toBeInTheDocument()
+  })
+
+  it('keeps command navigation, settings, and refresh shortcuts active without stale hints', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+    expect(screen.getByText('⌘1-5')).toBeInTheDocument()
+    expect(screen.getAllByText('⌘,').length).toBeGreaterThan(0)
+    expect(screen.getByText('⌘R')).toBeInTheDocument()
+    expect(screen.queryByText('Command')).not.toBeInTheDocument()
+    expect(screen.queryByText('Export view')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: '2', metaKey: true })
+    expect(await screen.findByText('Cost flow · model → project')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: '3', metaKey: true })
+    expect(await screen.findByText('No waste findings in this range yet.')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: '4', metaKey: true })
+    expect(await screen.findByText('No model usage in this range yet.')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: '5', metaKey: true })
+    expect(await screen.findByText('No plans configured')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: ',', metaKey: true })
+    expect((await screen.findAllByText('Settings')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Back')).not.toBeInTheDocument()
+
+    const overviewCalls = mocks.getOverview.mock.calls.length
+    fireEvent.keyDown(document, { key: 'r', metaKey: true })
+    await waitFor(() => expect(mocks.getOverview.mock.calls.length).toBeGreaterThan(overviewCalls))
   })
 
   it('re-polls visible section data when period or provider changes', async () => {
