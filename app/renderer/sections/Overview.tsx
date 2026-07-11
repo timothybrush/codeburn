@@ -420,20 +420,16 @@ export function OverviewContent({
   const applied = saved > 0 ? (actReport.data?.totals.measuredActions ?? 0) : 0
   return (
     <div className="ov-dashboard">
-      <div className="ov-kpis" aria-label="Key performance indicators">
-        <div className="ov-kpi"><span>Spend</span><strong>{formatUsd(data.current.cost)}</strong></div>
-        <div className="ov-kpi"><span>Calls</span><strong>{data.current.calls.toLocaleString('en-US')}</strong></div>
-        <div className="ov-kpi"><span>Sessions</span><strong>{data.current.sessions.toLocaleString('en-US')}</strong></div>
-        <div className="ov-kpi ov-kpi-primary"><span>One-shot</span><strong>{formatRate(data.current.oneShotRate)}</strong></div>
-        <div className="ov-kpi"><span>Cache hit</span><strong>{Math.round(data.current.cacheHitPercent)}%</strong></div>
-        <div className="ov-kpi ov-kpi-saved"><span>Saved</span><strong>{formatUsd(saved)}</strong><small>from {applied} applied fixes</small></div>
-      </div>
-
       <div className="ov-hero-row">
         <div className="ov-card ov-hero">
           <div className="ov-hero-top"><span className="ov-label">{data.current.label}</span><span className="ov-streak"><b>{streakDays(data.history.daily, now)}</b>-day streak</span></div>
           <CountUp value={data.current.cost} />
           <div className="ov-hero-sub">{data.current.calls.toLocaleString('en-US')} calls · {data.current.sessions.toLocaleString('en-US')} sessions</div>
+          <div className="ov-hero-kpis" aria-label="Key performance indicators">
+            <div className="ov-hero-kpi ov-hero-kpi-accent"><span>One-shot</span><strong>{formatRate(data.current.oneShotRate)}</strong></div>
+            <div className="ov-hero-kpi"><span>Cache hit</span><strong>{Math.round(data.current.cacheHitPercent)}%</strong></div>
+            <div className="ov-hero-kpi ov-hero-kpi-saved"><span>Saved</span><strong>{formatUsd(saved)}</strong><small>from {applied} applied fixes</small></div>
+          </div>
         </div>
         <FuelRing status={plans.data} onNavigate={onNavigate} />
       </div>
