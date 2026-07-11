@@ -177,12 +177,15 @@ describe('Overview', () => {
     expect(screen.getByText('Last 30 days')).toBeInTheDocument()
     expect(container.querySelector('.ov-streak')).toHaveTextContent('30-day streak')
 
-    // The KPI strip surfaces the payload's previously hidden success/cache
-    // metrics, and the saved KPI remains backed by the ACT report poll.
+    // The unified hero keeps spend/savings, activity, and efficiency in one
+    // divided card. Success/cache now live only in the scorecard column.
     const kpis = screen.getByLabelText('Key performance indicators')
-    expect(within(kpis).getByText('74%')).toBeInTheDocument()
-    expect(within(kpis).getByText('63%')).toBeInTheDocument()
+    expect(within(kpis).getAllByText('74%')).toHaveLength(1)
+    expect(within(kpis).getAllByText('63%')).toHaveLength(1)
     expect(within(kpis).getByText('$84.20')).toBeInTheDocument()
+    expect(within(kpis).getByLabelText('Efficiency grade B')).toHaveTextContent('B')
+    expect(kpis.querySelector(':scope > .ov-efficiency')).toBeInTheDocument()
+    expect(kpis.querySelector('.ov-efficiency.ov-card')).not.toBeInTheDocument()
 
     // The contribution grid contains the real active history days, and the
     // right rail renders real, cost-sorted activity data including one-shot.
@@ -244,6 +247,10 @@ describe('Overview', () => {
     expect(screen.getByText('82%')).toBeInTheDocument()
     expect(screen.getByText('$84.20')).toBeInTheDocument()
     expect(screen.getByText('from 11 applied fixes')).toBeInTheDocument()
+    const statsCard = screen.getByText('Month to date').closest('.ov-stats3')
+    expect(statsCard).toHaveClass('ov-card')
+    expect(statsCard?.querySelector(':scope > .ov-fuel')).toBeInTheDocument()
+    expect(statsCard?.querySelector('.ov-fuel.ov-card')).not.toBeInTheDocument()
   })
 
   it('renders efficiency, cost-per-outcome, and real anomaly widgets', async () => {
