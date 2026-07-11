@@ -9,6 +9,7 @@ import { usePolled } from './hooks/usePolled'
 import { codeburn } from './lib/ipc'
 import { Overview } from './sections/Overview'
 import { Optimize } from './sections/Optimize'
+import { Models } from './sections/Models'
 import { Spend } from './sections/Spend'
 import type { MenubarPayload, Period } from './lib/types'
 
@@ -74,6 +75,8 @@ export function App() {
             <Spend period={period} provider={provider} />
           ) : section === 'optimize' ? (
             <Optimize period={period} provider={provider} />
+          ) : section === 'models' ? (
+            <Models period={period} provider={provider} />
           ) : (
             <SectionPlaceholder title={SECTION_TITLES[section]} />
           )}

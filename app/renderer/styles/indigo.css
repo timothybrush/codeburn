@@ -149,7 +149,7 @@ th:last-child, td:last-child { padding-right: 2px; }
 td { font-family: var(--mono); font-size: 11.5px; text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; white-space: nowrap; }
 td:first-child { font-family: var(--sans); font-size: 12.5px; font-weight: 520; }
 tr:last-child td { border-bottom: 0; }
-td .pos { color: var(--mint); }
+td.pos, td .pos { color: var(--mint); }
 .dim { color: var(--t3); }
 .est { font-size: 9.5px; color: var(--t3); font-family: var(--mono); }
 .alias { color: var(--lav); font-family: var(--sans); font-size: 11px; font-weight: 530; }
