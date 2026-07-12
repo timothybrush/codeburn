@@ -5,12 +5,13 @@ import type { DailyHistoryEntry } from '../lib/types'
 const SERIES_ORDER: readonly SeriesKey[] = ['opus', 'fable', 'haiku', 'gpt', 'sonnet', 'other']
 
 export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
+  const visibleDaily = daily.slice(-15)
   const presentSeries = new Set<SeriesKey>()
   const maxTotal = Math.max(
     1,
-    ...daily.map(day => day.topModels.reduce((sum, model) => sum + Math.max(0, model.cost), 0)),
+    ...visibleDaily.map(day => day.topModels.reduce((sum, model) => sum + Math.max(0, model.cost), 0)),
   )
-  for (const day of daily) {
+  for (const day of visibleDaily) {
     for (const model of day.topModels) {
       if (model.cost > 0) presentSeries.add(seriesKeyForModel(model.name))
     }
@@ -20,7 +21,7 @@ export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
   return (
     <div className="sbars-wrap">
       <div className="sbars" aria-label="Daily spend by model">
-        {daily.map(day => (
+        {visibleDaily.map(day => (
           <div className="c" key={day.date} data-date={day.date} title={`${day.date} · ${formatUsd(day.cost)}`}>
             {[...day.topModels].sort(
               (a, b) => SERIES_ORDER.indexOf(seriesKeyForModel(a.name)) - SERIES_ORDER.indexOf(seriesKeyForModel(b.name)),
