@@ -293,6 +293,8 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .btn-s { background: var(--panel); }
 .btnp:focus-visible, .btn:focus-visible, .btn-s:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .panel { border-color: var(--line); box-shadow: var(--card-shadow); }
+.spend-top-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.spend-breakdowns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .error-boundary { display: flex; padding: 20px; }
 .error-card { max-width: 760px; padding: 16px 18px; }
 .error-title { margin: 0 0 8px; font-size: 14px; font-weight: 620; color: var(--ink); }
@@ -667,6 +669,8 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .cmp-turns { color: var(--mut2); }
 
 @media (max-width: 860px) {
+  .spend-top-row { grid-template-columns: 1fr; }
+  .spend-breakdowns { grid-template-columns: 1fr; }
   .cmp-picker .dropdown { width: 180px !important; }
   .cmp-pair { grid-template-columns: 1fr; }
   .cmp-metric-head, .cmp-metric { grid-template-columns: minmax(110px, 1fr) 76px 76px; }

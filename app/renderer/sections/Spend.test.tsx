@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MenubarPayload, SpendFlow } from '../lib/types'
@@ -157,31 +157,46 @@ describe('Spend', () => {
     expect(container.querySelectorAll('[data-testid="sankey-ribbon"]')).toHaveLength(makeFlow().links.length)
   })
 
-  it.each([
-    ['Activity', ['coding', '$42.00', 'imagegen', '$1.25']],
-    ['Tools', ['Read', '30 calls']],
-    ['MCP', ['filesystem', '9 calls']],
-    ['Subagents', ['reviewer', '$2.50']],
-  ])('renders %s lens data', async (tab, expectedTexts) => {
+  it('renders the chart, projects, Sankey, and all non-empty breakdowns on one page', async () => {
     getOverview.mockResolvedValue(makePayload(new Date()))
     getSpendFlow.mockResolvedValue(makeFlow())
 
     render(<Spend period="week" provider="all" />)
-    expect(await screen.findByText('codeburn')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: tab }))
-
-    for (const text of expectedTexts) {
-      expect(screen.getByText(text)).toBeInTheDocument()
-    }
+    expect(await screen.findByLabelText('Daily spend by model')).toBeInTheDocument()
+    expect(screen.getByText('By project')).toBeInTheDocument()
+    expect(screen.getByText('Cost flow · model → project')).toBeInTheDocument()
+    expect(screen.getByText('Activity')).toBeInTheDocument()
+    expect(screen.getByText('coding')).toBeInTheDocument()
+    expect(screen.getByText('imagegen')).toBeInTheDocument()
+    expect(screen.getByText('Tools')).toBeInTheDocument()
+    expect(screen.getByText('Read')).toBeInTheDocument()
+    expect(screen.getByText('MCP')).toBeInTheDocument()
+    expect(screen.getByText('filesystem')).toBeInTheDocument()
+    expect(screen.getByText('Subagents')).toBeInTheDocument()
+    expect(screen.getByText('reviewer')).toBeInTheDocument()
   })
 
-  it.each([
-    ['Activity', 'No activity or skill spend in this range yet.'],
-    ['Tools', 'No tool calls in this range yet.'],
-    ['MCP', 'No MCP server calls in this range yet.'],
-    ['Subagents', 'No subagent spend in this range yet.'],
-  ])('renders the honest empty state for %s', async (tab, emptyText) => {
+  it.each(['Activity', 'Tools', 'MCP', 'Subagents'])('hides an empty %s breakdown', async title => {
+    const payload = makePayload(new Date())
+    if (title === 'Activity') {
+      payload.current.topActivities = []
+      payload.current.skills = []
+    } else if (title === 'Tools') {
+      payload.current.tools = []
+    } else if (title === 'MCP') {
+      payload.current.mcpServers = []
+    } else {
+      payload.current.subagents = []
+    }
+    getOverview.mockResolvedValue(payload)
+    getSpendFlow.mockResolvedValue(makeFlow())
+
+    render(<Spend period="week" provider="all" />)
+    expect(await screen.findByText('codeburn')).toBeInTheDocument()
+    expect(screen.queryByText(title)).not.toBeInTheDocument()
+  })
+
+  it('shows one compact empty state when every breakdown is empty', async () => {
     const payload = makePayload(new Date())
     payload.current.topActivities = []
     payload.current.skills = []
@@ -192,11 +207,35 @@ describe('Spend', () => {
     getSpendFlow.mockResolvedValue(makeFlow())
 
     render(<Spend period="week" provider="all" />)
+
+    expect(await screen.findByText('No activity, tool, MCP, or subagent data in this range yet.')).toBeInTheDocument()
+    expect(screen.queryByText('Activity')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tools')).not.toBeInTheDocument()
+    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('Subagents')).not.toBeInTheDocument()
+  })
+
+  it('does not render the removed lens tabs', async () => {
+    getOverview.mockResolvedValue(makePayload(new Date()))
+    getSpendFlow.mockResolvedValue(makeFlow())
+
+    render(<Spend period="week" provider="all" />)
     expect(await screen.findByText('codeburn')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: tab }))
+    for (const name of ['Projects', 'Activity', 'Tools', 'MCP', 'Subagents']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+    }
+  })
 
-    expect(screen.getByText(emptyText)).toBeInTheDocument()
+  it('groups the top panels and breakdown panels in their page grids', async () => {
+    getOverview.mockResolvedValue(makePayload(new Date()))
+    getSpendFlow.mockResolvedValue(makeFlow())
+
+    const { container } = render(<Spend period="week" provider="all" />)
+    expect(await screen.findByText('codeburn')).toBeInTheDocument()
+
+    expect(container.querySelector('.spend-top-row')?.children).toHaveLength(2)
+    expect(container.querySelector('.spend-breakdowns')?.children).toHaveLength(4)
   })
 
   it('renders empty stacked chart and empty flow states', async () => {
