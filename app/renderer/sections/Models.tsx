@@ -6,7 +6,7 @@ import { Panel } from '../components/Panel'
 import { SegTabs } from '../components/SegTabs'
 import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { DateRange, ModelReportRow, Period } from '../lib/types'
 
@@ -19,15 +19,6 @@ const LENSES = [
 
 function fmtInt(n: number): string {
   return n.toLocaleString('en-US')
-}
-
-function fmtCompact(n: number): string {
-  if (n === 0) return '0'
-  if (n < 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return new Intl.NumberFormat('en-US', {
-    notation: 'compact',
-    maximumFractionDigits: n >= 10_000_000 ? 1 : 2,
-  }).format(n)
 }
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
@@ -138,7 +129,7 @@ function ModelsByTaskTable({ rows }: { rows: ModelReportRow[] }) {
 function ModelTableRow({ row }: { row: ModelReportRow }) {
   const unpriced = row.costUSD === 0 && row.savingsUSD === 0
   const cellClass = unpriced ? 'dim' : undefined
-  const tokenValue = (value: number) => (unpriced ? '—' : fmtCompact(value))
+  const tokenValue = (value: number) => (unpriced ? '—' : formatCompact(value))
   const dotStyle = {
     display: 'inline-block',
     background: seriesColorForModel(row.modelDisplayName || row.model),
@@ -199,7 +190,7 @@ function ModelGroupRow({ rows }: { rows: ModelReportRow[] }) {
 function ModelTaskRow({ row }: { row: ModelReportRow }) {
   const unpriced = row.costUSD === 0 && row.savingsUSD === 0
   const cellClass = unpriced ? 'dim' : undefined
-  const tokenValue = (value: number) => (unpriced ? '—' : fmtCompact(value))
+  const tokenValue = (value: number) => (unpriced ? '—' : formatCompact(value))
 
   return (
     <tr className="model-task-row">
