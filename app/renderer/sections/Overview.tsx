@@ -8,7 +8,7 @@ import { Panel } from '../components/Panel'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import { contiguousDailyWindow, formatChartDate, localDateKey, sliceDailyToPeriod } from '../lib/period'
+import { formatChartDate, localDateKey, sliceDailyToPeriod } from '../lib/period'
 import type {
   ActReportJson,
   DailyHistoryEntry,
@@ -472,7 +472,7 @@ export function OverviewContent({
   const now = new Date()
   const stats = deriveStats(data, now)
   const periodDaily = sliceDailyToPeriod(data.history.daily, period, now)
-  const chartDaily = contiguousDailyWindow(data.history.daily, Math.max(30, periodDaily.length), now)
+  const chartDaily = data.history.daily.slice(-Math.max(30, periodDaily.length))
   const models = aggregateModels(periodDaily)
   const recent14 = data.history.daily.slice(-14)
   const weekNow = mean(recent14.slice(-7).map(day => day.cost))

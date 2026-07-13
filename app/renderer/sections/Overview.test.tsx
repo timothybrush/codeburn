@@ -41,7 +41,7 @@ function makeYieldReport(): YieldJsonReport {
  * A fully-typed payload anchored to `now` so today/MTD/projected are stable.
  * `history.daily` deliberately spans 30 backfill days (the real CLI emits up to
  * 365 regardless of period) so tests can prove period aggregation while the
- * trend chart keeps its contiguous 30-day window.
+ * trend chart keeps the real last 30 entries.
  */
 function makePayload(now: Date): MenubarPayload {
   const DAYS = 30
@@ -276,17 +276,21 @@ describe('Overview', () => {
     expect(screen.getByText('$0.00')).toBeInTheDocument()
   })
 
-  it('always shows at least a 30-day window regardless of the selected period', async () => {
+  it('shows the available real history entries without zero-filling a 30-day window', async () => {
     const now = new Date()
-    getOverview.mockResolvedValue(makePayload(now))
+    const payload = makePayload(now)
+    payload.history.daily = payload.history.daily.slice(-5)
+    getOverview.mockResolvedValue(payload)
 
     // The daily chart is a trend, not scoped to the period selector: even for a
-    // short period like "week" it renders a contiguous >= 30-day window,
-    // backfilling days with no activity as zero-height bars.
+    // short period like "week" it uses the real history entries and does not
+    // synthesize zero-height bars to reach 30 days.
     const { container } = render(<Overview period="week" provider="all" />)
 
     expect(await screen.findByText('parser-service')).toBeInTheDocument()
-    expect(container.querySelectorAll('.chart .col')).toHaveLength(30)
+    const bars = container.querySelectorAll('.chart .col')
+    expect(bars).toHaveLength(5)
+    expect([...bars].map(bar => bar.getAttribute('data-cost'))).toEqual(['5', '5', '5', '5', '6.2'])
   })
 
   it('computes month-to-date, projection, and previous-month pace', async () => {

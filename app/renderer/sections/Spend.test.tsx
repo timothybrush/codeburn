@@ -135,7 +135,7 @@ describe('Spend', () => {
     vi.useRealTimers()
   })
 
-  it('renders a contiguous 15-day spend window, date axis, projects, and Sankey ribbons', async () => {
+  it('renders the real last-15 spend entries, date axis, projects, and Sankey ribbons', async () => {
     getOverview.mockResolvedValue(makePayload(new Date()))
     getSpendFlow.mockResolvedValue(makeFlow())
 
@@ -147,27 +147,17 @@ describe('Spend', () => {
     expect(screen.getByText('top 2')).toBeInTheDocument()
 
     const barColumns = container.querySelectorAll('.sbars .c')
-    expect(barColumns).toHaveLength(15)
+    expect(barColumns).toHaveLength(5)
     expect([...barColumns].map(col => col.getAttribute('data-date'))).toEqual([
-      '2026-06-26',
-      '2026-06-27',
-      '2026-06-28',
-      '2026-06-29',
       '2026-06-30',
       '2026-07-01',
-      '2026-07-02',
-      '2026-07-03',
       '2026-07-04',
-      '2026-07-05',
       '2026-07-06',
-      '2026-07-07',
-      '2026-07-08',
-      '2026-07-09',
       '2026-07-10',
     ])
     const ticks = container.querySelectorAll('.sbars-wrap > .ov-xax span')
-    expect(ticks).toHaveLength(5)
-    expect([...ticks].map(tick => tick.textContent)).toEqual(['Jun 26', 'Jun 30', 'Jul 4', 'Jul 8', 'Jul 10'])
+    expect(ticks).toHaveLength(2)
+    expect([...ticks].map(tick => tick.textContent)).toEqual(['Jun 30', 'Jul 10'])
 
     expect(container.querySelectorAll('[data-testid="sankey-ribbon"]')).toHaveLength(makeFlow().links.length)
   })
@@ -253,7 +243,7 @@ describe('Spend', () => {
     expect(container.querySelector('.spend-breakdowns')?.children).toHaveLength(4)
   })
 
-  it('renders an empty 15-day chart window and empty flow state', async () => {
+  it('renders empty chart and flow states when no daily spend exists', async () => {
     const payload = makePayload(new Date())
     payload.history.daily = []
     getOverview.mockResolvedValue(payload)
@@ -261,9 +251,8 @@ describe('Spend', () => {
 
     const { container } = render(<Spend period="week" provider="all" />)
 
-    expect(await screen.findByLabelText('Daily spend by model')).toBeInTheDocument()
-    expect(container.querySelectorAll('.sbars .c')).toHaveLength(15)
-    expect(container.querySelectorAll('.sbars .s')).toHaveLength(0)
+    expect(await screen.findByText('No model spend in this range yet.')).toBeInTheDocument()
+    expect(container.querySelector('.sbars')).not.toBeInTheDocument()
     expect(await screen.findByText('No model-project flow in this range yet.')).toBeInTheDocument()
   })
 

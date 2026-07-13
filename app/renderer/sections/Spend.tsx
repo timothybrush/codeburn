@@ -6,7 +6,6 @@ import { StackedBars } from '../components/StackedBars'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import { contiguousDailyWindow } from '../lib/period'
 import type { DateRange, MenubarPayload, Period, SpendFlow } from '../lib/types'
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
@@ -58,7 +57,10 @@ function SpendPage({
   data: MenubarPayload
   flow: ReturnType<typeof usePolled<SpendFlow>>
 }) {
-  const chartDaily = contiguousDailyWindow(data.history.daily, 15)
+  // Use the real last-15 backfilled days directly. Rebuilding a calendar window
+  // client-side (contiguousDailyWindow) mismatched the CLI's date keys and
+  // zero-filled every day, leaving the chart empty.
+  const chartDaily = data.history.daily.slice(-15)
   const projects = data.current.topProjects
   const breakdowns = [
     {
@@ -111,7 +113,7 @@ function SpendPage({
     <>
       <div className="spend-top-row">
         <Panel title="Daily spend by model" className="spend-chart-panel">
-          <StackedBars daily={chartDaily} />
+          {chartDaily.length ? <StackedBars daily={chartDaily} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
         </Panel>
         <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined} className="spend-scroll">
           {projects.length ? (
