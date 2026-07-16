@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 
 import { FlameMark } from './FlameMark'
 import { motionClass, reducedMotion } from '../lib/motion'
+import { version } from '../../package.json'
 
 const MIN_ON_SCREEN_MS = 600
 const CROSSFADE_MS = 250
@@ -58,6 +59,7 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
         <FlameMark size={76} />
       </div>
       <div className="splash-word">CodeBurn</div>
+      <div className="splash-version">v{version}</div>
     </div>,
     document.body,
   )
