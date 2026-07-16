@@ -5,6 +5,7 @@ import { EmptyNote } from '../components/EmptyState'
 import { ListRow } from '../components/ListRow'
 import { Panel } from '../components/Panel'
 import { Sankey } from '../components/Sankey'
+import { SectionSkeleton } from '../components/Skeleton'
 import { StackedBars } from '../components/StackedBars'
 import { StaleBanner } from '../components/StaleBanner'
 import { type Polled, usePolled } from '../hooks/usePolled'
@@ -60,14 +61,11 @@ export function SpendContent({
 
   if (!overview.data) {
     if (overview.error) return <CliErrorPanel error={overview.error} subject="spend" />
-    return (
-      <Panel title="Spend">
-        <EmptyNote>Scanning spend…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Scanning spend…" rows={3} chart />
   }
 
-  return <SpendPage data={overview.data} flow={flow} provider={provider} range={range} staleError={overview.error} />
+  const animateKey = `${period}|${provider}|${range?.from ?? ''}|${range?.to ?? ''}`
+  return <SpendPage data={overview.data} flow={flow} provider={provider} range={range} staleError={overview.error} animateKey={animateKey} />
 }
 
 function SpendPage({
@@ -76,12 +74,14 @@ function SpendPage({
   provider,
   range,
   staleError,
+  animateKey,
 }: {
   data: MenubarPayload
   flow: ReturnType<typeof usePolled<SpendFlow>>
   provider: string
   range: DateRange | null
   staleError: CliError | null
+  animateKey: string
 }) {
   // `history.daily` is SPARSE (active days only), so zero-fill a contiguous
   // calendar window client-side; date keys are localDateKey / the CLI dateKey,
@@ -148,7 +148,7 @@ function SpendPage({
       {staleError && <StaleBanner error={staleError} />}
       <div className="spend-top-row">
         <Panel title="Daily spend by model" className="spend-chart-panel">
-          {chartHasSpend ? <StackedBars daily={chartDaily} fallbackLabel={providerLabel(provider)} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
+          {chartHasSpend ? <StackedBars daily={chartDaily} fallbackLabel={providerLabel(provider)} animateKey={animateKey} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
         </Panel>
         <ProjectBreakdown projects={projects} />
       </div>

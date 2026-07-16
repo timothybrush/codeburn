@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -113,6 +113,19 @@ const rows: SessionRow[] = [
 
 describe('Sessions', () => {
   beforeEach(() => getSessions.mockReset())
+
+  it('shows the first-load skeleton, then yields to the session list', async () => {
+    let resolve!: (value: SessionRow[]) => void
+    getSessions.mockReturnValue(new Promise<SessionRow[]>(r => { resolve = r }))
+    const { container } = render(<Sessions period="30days" provider="all" />)
+
+    expect(container.querySelector('.skel')).toBeInTheDocument()
+    expect(screen.getByText('Scanning sessions…')).toHaveClass('sr-only')
+
+    resolve(rows)
+    await waitFor(() => expect(container.querySelector('.session-list')).toBeInTheDocument())
+    expect(container.querySelector('.skel')).not.toBeInTheDocument()
+  })
 
   it('shows a summary of every filtered session and groups providers', async () => {
     getSessions.mockResolvedValue(rows)

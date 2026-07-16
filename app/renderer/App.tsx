@@ -5,11 +5,13 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Hint } from './components/Hint'
 import { Panel } from './components/Panel'
 import { Sidebar, type Section } from './components/Sidebar'
+import { ToastHost } from './components/ToastHost'
 import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
 import { readDailyBudget } from './lib/budget'
 import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
+import { motionClass } from './lib/motion'
 import { codeburn } from './lib/ipc'
 import { localDateKey } from './lib/period'
 import { OverviewContent } from './sections/Overview'
@@ -215,6 +217,7 @@ export function App() {
   return (
     <Window>
       <Sidebar active={section} onNavigate={navigate} status={<StatusLine polled={overview} />} />
+      <ToastHost />
       <div className="ct">
         <DailyBudgetBanner payload={overview.data ?? null} provider={provider} />
         <ErrorBoundary key={section}>
@@ -239,7 +242,7 @@ export function App() {
               configSource={claudeConfigSource}
               onConfigSelect={onConfigSelect}
             />
-            <div className="body">
+            <div className={motionClass('body', 'section-fade')}>
               {section === 'overview' ? (
                 <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} />
               ) : section === 'sessions' ? (

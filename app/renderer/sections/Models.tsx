@@ -4,6 +4,7 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { EmptyNote } from '../components/EmptyState'
 import { seriesColorForModel } from '../components/ListRow'
 import { Panel } from '../components/Panel'
+import { SectionSkeleton } from '../components/Skeleton'
 import { SegTabs } from '../components/SegTabs'
 import { StaleBanner } from '../components/StaleBanner'
 import type { Section } from '../components/Sidebar'
@@ -89,11 +90,7 @@ function ModelsUsage({
 
   if (!report.data) {
     if (report.error) return <CliErrorPanel error={report.error} subject="model usage" />
-    return (
-      <Panel title="Models">
-        <EmptyNote>Scanning model usage…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Scanning model usage…" rows={5} />
   }
 
   return (

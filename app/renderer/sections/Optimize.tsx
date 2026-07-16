@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react'
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { EmptyNote } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
+import { SectionSkeleton } from '../components/Skeleton'
 import { SegTabs } from '../components/SegTabs'
 import { StaleBanner } from '../components/StaleBanner'
 import { type Polled, usePolled } from '../hooks/usePolled'
@@ -45,11 +46,7 @@ export function OptimizeContent({
 
   if (!overview.data) {
     if (overview.error) return <CliErrorPanel error={overview.error} subject="optimize findings" />
-    return (
-      <Panel title="Optimize">
-        <EmptyNote>Scanning optimize findings…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Scanning optimize findings…" rows={5} />
   }
 
   const yieldData = yieldReport.error ? null : yieldReport.data

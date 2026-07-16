@@ -4,6 +4,7 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { EmptyNote } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
 import { ProviderLogo } from '../components/ProviderLogo'
+import { SectionSkeleton } from '../components/Skeleton'
 import { SegTabs } from '../components/SegTabs'
 import { StaleBanner } from '../components/StaleBanner'
 import { Stat } from '../components/Stat'
@@ -141,11 +142,7 @@ export function Sessions({
 
   if (!report.data) {
     if (report.error) return <CliErrorPanel error={report.error} subject="sessions" />
-    return (
-      <Panel title="Sessions">
-        <EmptyNote>Scanning sessions…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Scanning sessions…" rows={5} />
   }
 
   if (!report.data.length) {

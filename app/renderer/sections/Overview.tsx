@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import gsap from 'gsap'
 
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { ActivityHeatmap } from '../components/ActivityHeatmap'
 import { EmptyNote } from '../components/EmptyState'
 import { ListRow } from '../components/ListRow'
-import { Panel } from '../components/Panel'
+import { SectionSkeleton } from '../components/Skeleton'
 import { StaleBanner } from '../components/StaleBanner'
+import { motionEnabled, useBarGrowIn } from '../lib/motion'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
@@ -336,24 +338,33 @@ function streakDays(daily: DailyHistoryEntry[], now: Date): number {
   return streak
 }
 
-function CountUp({ value }: { value: number }) {
+/**
+ * Hero cost with a count-up that fires on mount and whenever the filter key
+ * changes (a user action), but never on the 30s poll: a value that arrives
+ * under the same `animateKey` snaps in place instead of re-animating.
+ */
+function CountUp({ value, animateKey }: { value: number; animateKey: string }) {
   const ref = useRef<HTMLDivElement>(null)
+  const keyRef = useRef<string | null>(null)
 
   useEffect(() => {
     const element = ref.current
     if (!element) return
-    let frame = 0
-    const start = performance.now()
-    const duration = 850
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / duration)
-      const eased = 1 - Math.pow(1 - t, 3)
-      element.textContent = formatUsd(value * eased)
-      if (t < 1) frame = requestAnimationFrame(step)
+    const keyChanged = keyRef.current !== animateKey
+    keyRef.current = animateKey
+    if (!keyChanged || !motionEnabled()) {
+      element.textContent = formatUsd(value)
+      return
     }
-    frame = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(frame)
-  }, [value])
+    const counter = { n: 0 }
+    const tween = gsap.to(counter, {
+      n: value,
+      duration: 0.7,
+      ease: 'power2.out',
+      onUpdate: () => { element.textContent = formatUsd(counter.n) },
+    })
+    return () => { tween.kill() }
+  }, [value, animateKey])
 
   return <div ref={ref} className="ov-hero-num" data-countup={value}>{formatUsd(value)}</div>
 }
@@ -432,7 +443,7 @@ function ModelsTable({ models }: { models: AggregatedModel[] }) {
   )
 }
 
-function DailyChart({ daily }: { daily: DailyHistoryEntry[] }) {
+function DailyChart({ daily, animateKey = '' }: { daily: DailyHistoryEntry[]; animateKey?: string }) {
   const max = Math.max(...daily.map(day => day.cost), 0)
   const peakIndex = daily.reduce((peak, day, index) => day.cost > (daily[peak]?.cost ?? -1) ? index : peak, 0)
   const peak = daily[peakIndex]
@@ -442,6 +453,8 @@ function DailyChart({ daily }: { daily: DailyHistoryEntry[] }) {
   const [tip, setTip] = useState<{ day: DailyHistoryEntry; x: number; y: number } | null>(null)
   const [tipPosition, setTipPosition] = useState<{ left: number; top: number } | null>(null)
   const tipRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<HTMLDivElement>(null)
+  useBarGrowIn(chartRef, '.col', [animateKey])
 
   useLayoutEffect(() => {
     if (!tip) {
@@ -463,7 +476,7 @@ function DailyChart({ daily }: { daily: DailyHistoryEntry[] }) {
 
   return (
     <>
-      <div className="chart">
+      <div className="chart" ref={chartRef}>
         {daily.map((day, index) => (
           <button
             type="button"
@@ -564,11 +577,12 @@ export function OverviewContent({
 
   if (!data) {
     if (error) return <CliErrorPanel error={error} subject="your usage" />
-    return <Panel title="Overview"><EmptyNote>Scanning sessions…</EmptyNote></Panel>
+    return <SectionSkeleton label="Scanning sessions…" rows={3} chart />
   }
 
   const now = new Date()
   const rangeActive = !!range
+  const animateKey = `${period}|${provider}|${range?.from ?? ''}|${range?.to ?? ''}`
   const stats = deriveStats(data, now)
   const periodDaily = sliceDailyToPeriod(data.history.daily, period, now)
   // Daily chart: contiguous zero-filled calendar window. A custom range spans
@@ -604,7 +618,7 @@ export function OverviewContent({
       <div className="ov-card ov-hero-split" aria-label="Key performance indicators">
         <div className="ov-hero-main">
           <div className="ov-hero-top"><span className="ov-label">{data.current.label}</span><span className="ov-streak"><b>{streakDays(data.history.daily, now)}</b>-day streak</span></div>
-          <CountUp value={data.current.cost} />
+          <CountUp value={data.current.cost} animateKey={animateKey} />
           <div className="ov-hero-sub">{data.current.calls.toLocaleString('en-US')} calls · {data.current.sessions.toLocaleString('en-US')} sessions</div>
           <div className="ov-saved-line"><span>Saved by applied fixes</span><strong>{formatUsd(saved)}</strong><small>across {applied} {applied === 1 ? 'fix' : 'fixes'}</small></div>
           {localSaved > 0 && (
@@ -624,7 +638,7 @@ export function OverviewContent({
 
       <div className="ov-card ov-panel ov-chart-widget">
         <div className="ov-panel-head"><h3>Daily spend</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
-        <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} /> : <EmptyNote>No spend yet.</EmptyNote>}</div>
+        <div className="ov-panel-body">{data.history.daily.length ? <DailyChart daily={chartDaily} animateKey={animateKey} /> : <EmptyNote>No spend yet.</EmptyNote>}</div>
       </div>
 
       <div className="ov-insight-band">

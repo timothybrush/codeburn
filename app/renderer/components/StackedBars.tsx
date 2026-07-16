@@ -1,4 +1,7 @@
+import { useRef } from 'react'
+
 import { formatUsd } from '../lib/format'
+import { useBarGrowIn } from '../lib/motion'
 import { SERIES_LABELS, type SeriesKey, seriesClassForKey, seriesClassForModel, seriesKeyForModel } from '../lib/modelSeries'
 import { formatChartDate } from '../lib/period'
 import type { DailyHistoryEntry } from '../lib/types'
@@ -9,7 +12,9 @@ function modelSpend(day: DailyHistoryEntry): number {
   return day.topModels.reduce((sum, model) => sum + Math.max(0, model.cost), 0)
 }
 
-export function StackedBars({ daily, fallbackLabel = 'All models' }: { daily: DailyHistoryEntry[]; fallbackLabel?: string }) {
+export function StackedBars({ daily, fallbackLabel = 'All models', animateKey = '' }: { daily: DailyHistoryEntry[]; fallbackLabel?: string; animateKey?: string }) {
+  const barsRef = useRef<HTMLDivElement>(null)
+  useBarGrowIn(barsRef, '.c', [animateKey])
   const presentSeries = new Set<SeriesKey>()
   let usesFallback = false
   for (const day of daily) {
@@ -32,7 +37,7 @@ export function StackedBars({ daily, fallbackLabel = 'All models' }: { daily: Da
 
   return (
     <div className="sbars-wrap">
-      <div className="sbars" aria-label="Daily spend by model">
+      <div className="sbars" aria-label="Daily spend by model" ref={barsRef}>
         {daily.map(day => (
           <div className="c" key={day.date} data-date={day.date} title={`${day.date} · ${formatUsd(day.cost)}`}>
             {modelSpend(day) > 0 ? (

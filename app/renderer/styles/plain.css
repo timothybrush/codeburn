@@ -777,3 +777,53 @@ td:first-child { font-size: var(--fs-body); font-weight: var(--fw-body); }
 @media (max-width: 720px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ————— Motion (Batch G3). Every JS-driven path is gated by motionEnabled();
+   the pure-CSS bits below add a reduced-motion escape hatch of their own. ————— */
+
+/* Visually-hidden text kept for screen readers (e.g. skeleton loading label). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* First-load skeleton: shimmer blocks standing in for a panel's real content. */
+.skel-card { width: 100%; }
+.skel-body { display: flex; flex-direction: column; gap: var(--sp-3); }
+.skel { position: relative; display: block; overflow: hidden; border-radius: 6px; background: var(--fill); }
+.skel-line { height: 12px; }
+.skel-chart { height: 150px; margin-bottom: var(--sp-1); border-radius: 8px; }
+.skel::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 9%, transparent), transparent);
+  animation: skel-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+
+/* Section body fade/slide on section switch (keyed remount in App). */
+.section-fade { animation: section-in 180ms ease-out; }
+@keyframes section-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Action toasts: single, bottom-right, slide-in. */
+.toast-host { position: fixed; right: 18px; bottom: 18px; z-index: 2000; display: flex; flex-direction: column; gap: var(--sp-2); pointer-events: none; }
+.toast {
+  pointer-events: auto; max-width: 340px; padding: 10px 14px; border: 1px solid var(--line);
+  border-left: 3px solid var(--ok); border-radius: 9px; background: var(--panel); color: var(--ink);
+  font-size: var(--fs-body); font-weight: var(--fw-medium); line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0,0,0,.16);
+}
+.toast-error { border-left-color: var(--bad); }
+.toast-in { animation: toast-in 200ms ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+
+/* Micro-interactions: card hover-lift + button press. Transform only, no reflow. */
+.panel, .ov-card { transition: transform 140ms ease, box-shadow 140ms ease; }
+.panel:hover, .ov-card:hover { transform: translateY(-1px); box-shadow: var(--card-shadow), 0 6px 16px rgba(0,0,0,.10); }
+.btnp, .btn, .ov-coach-cta { transition: transform 120ms ease; }
+.btnp:active, .btn:active, .ov-coach-cta:active { transform: scale(0.98); }
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after, .section-fade, .toast-in { animation: none; }
+  .panel, .ov-card, .btnp, .btn, .ov-coach-cta { transition: none; }
+  .panel:hover, .ov-card:hover, .btnp:active, .btn:active, .ov-coach-cta:active { transform: none; }
+}

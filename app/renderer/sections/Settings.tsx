@@ -10,6 +10,9 @@ import { usePolled } from '../hooks/usePolled'
 import { readDailyBudget } from '../lib/budget'
 import { formatConverted, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
+import { motionClass } from '../lib/motion'
+import { showToast } from '../lib/toast'
+import { ToastHost } from '../components/ToastHost'
 import type { ActionResult, AliasRow, ClaudeConfigSelector, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, PriceOverrideList, PriceOverrideRow, PriceRates, ShareStatus, StatusJson } from '../lib/types'
 
 export type SettingsPane = 'general' | 'providers' | 'aliases' | 'pricing' | 'plans' | 'devices' | 'export' | 'privacy'
@@ -91,7 +94,8 @@ export function Settings({ period, refreshToken = 0, onNavigate, initialPane, cl
   return (
     <>
       <div className="bar"><div className="t">Settings</div></div>
-      <div className="body set-body">
+      <ToastHost />
+      <div className={motionClass('body set-body', 'section-fade')}>
         <nav className="set-rail" aria-label="Settings sections">
           {RAIL_ITEMS.map(item => (
             <button key={item.id} className={pane === item.id ? 'set-rail-item on' : 'set-rail-item'} aria-current={pane === item.id ? 'page' : undefined} onClick={() => setPane(item.id)}>
@@ -126,7 +130,6 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }
   const [budgetKind, setBudgetKind] = useState<'off' | 'usd' | 'tokens'>(() => readDailyBudget()?.kind ?? 'off')
   const [budgetInput, setBudgetInput] = useState(() => { const budget = readDailyBudget(); return budget ? String(budget.value) : '' })
   const [budgetError, setBudgetError] = useState('')
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
 
   useEffect(() => {
     if (theme === 'system') document.documentElement.removeAttribute('data-theme')
@@ -149,7 +152,7 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }
     writeSetting('codeburn.theme', next)
   }
   const finishCurrency = (result: ActionResult) => {
-    setMessage({ text: result.ok ? 'Updated' : result.stderr || 'Unable to update currency', error: !result.ok })
+    showToast(result.ok ? 'Updated' : result.stderr || 'Unable to update currency', result.ok ? 'ok' : 'error')
     if (result.ok) setCurrencyNonce(value => value + 1)
   }
   const currencies = [...CURRENCIES]
@@ -184,7 +187,6 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }
           <div className="about-row"><label className="tx" htmlFor="settings-period">Default period<small>Applied on next launch.</small></label><span className="r"><Dropdown id="settings-period" ariaLabel="Default period" value={defaultPeriod} options={[{ value: 'today', label: 'Today' }, { value: 'week', label: '7d' }, { value: '30days', label: '30d' }, { value: 'month', label: 'Month' }, { value: 'all', label: 'All' }]} onChange={value => { setDefaultPeriod(value); writeSetting('codeburn.defaultPeriod', value) }} width={92} /></span></div>
           <div className="about-row"><label className="tx" htmlFor="settings-budget">Daily budget<small>Warns at 80%, alerts at 100%.</small></label><span className="r"><Dropdown id="settings-budget" ariaLabel="Daily budget" value={budgetKind} options={[{ value: 'off', label: 'Off' }, { value: 'usd', label: 'USD amount' }, { value: 'tokens', label: 'Tokens' }]} onChange={value => { const kind = value as 'off' | 'usd' | 'tokens'; setBudgetKind(kind); persistBudget(kind, budgetInput) }} width={120} />{budgetKind !== 'off' && <input className="set-input" type="text" inputMode="decimal" aria-label="Daily budget amount" placeholder={budgetKind === 'usd' ? 'USD' : 'tokens'} value={budgetInput} onChange={event => { setBudgetInput(event.target.value); persistBudget(budgetKind, event.target.value) }} style={{ width: 90 }} />}</span></div>
           {budgetError && <p className="set-action-msg error">{budgetError}</p>}
-          {message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}
         </div>
       </div>
     </section>
@@ -297,11 +299,10 @@ function PlansPane({ period, refreshToken, onNavigate }: { period: Period; refre
   const [nonce, setNonce] = useState(0)
   const plans = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken, nonce])
   const [presetId, setPresetId] = useState(PLAN_PRESETS[0]!.id)
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
   const configured = plans.data ? planSummaries(plans.data) : []
 
   const finish = (result: ActionResult) => {
-    setMessage({ text: result.ok ? (result.stdout.trim() || 'Plan updated') : (result.stderr || 'Plan action failed'), error: !result.ok })
+    showToast(result.ok ? (result.stdout.trim() || 'Plan updated') : (result.stderr || 'Plan action failed'), result.ok ? 'ok' : 'error')
     if (result.ok) setNonce(value => value + 1)
   }
   const remove = (plan: JsonPlanSummary) => {
@@ -320,7 +321,6 @@ function PlansPane({ period, refreshToken, onNavigate }: { period: Period; refre
       </div>
       <div className="about-sec set-last-sec">
         <div className="about-row"><label className="tx" htmlFor="settings-plan-preset">Add a plan</label><span className="r"><Dropdown id="settings-plan-preset" ariaLabel="Add a plan" value={presetId} options={PLAN_PRESETS.map(preset => ({ value: preset.id, label: preset.label }))} onChange={value => setPresetId(value as PlanPreset['id'])} width={160} /><button className="btnp btnp-primary" onClick={add}>Add</button></span></div>
-        {message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}
       </div>
     </div>
     <p className="set-cap">Presets: Claude Pro, Claude Max 20x, Claude Max 5x, Cursor Pro, SuperGrok, and SuperGrok Heavy. <button className="set-text-button" onClick={() => onNavigate?.('plans')}>Open Plans →</button></p>
@@ -333,7 +333,6 @@ function ExportPane({ period, refreshToken }: { period: Period; refreshToken: nu
   const [provider, setProvider] = useState('all')
   const [destination, setDestination] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
   const providers = Object.keys(overview.data?.current.providers ?? {})
 
   const chooseDirectory = async () => {
@@ -343,10 +342,9 @@ function ExportPane({ period, refreshToken }: { period: Period; refreshToken: nu
   const exportNow = async () => {
     if (!destination) return
     setExporting(true)
-    setMessage(null)
     try {
       const result = await codeburn.exportData(format, provider, destination)
-      setMessage({ text: result.ok ? `Exported to ${destination}` : (result.stderr || 'Export failed'), error: !result.ok })
+      showToast(result.ok ? `Exported to ${destination}` : (result.stderr || 'Export failed'), result.ok ? 'ok' : 'error')
     } finally {
       setExporting(false)
     }
@@ -360,7 +358,7 @@ function ExportPane({ period, refreshToken }: { period: Period; refreshToken: nu
         <div className="about-row"><label className="tx" htmlFor="settings-export-provider">Provider</label><span className="r"><Dropdown id="settings-export-provider" ariaLabel="Provider" value={provider} options={[{ value: 'all', label: 'All providers' }, ...providers.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))]} onChange={setProvider} width={150} /></span></div>
         <div className="about-row"><span className="tx">Destination</span><span className="r set-export-destination"><span className="set-mono">{destination ?? 'Choose a folder…'}</span><button className="btnp" onClick={() => void chooseDirectory()}>Choose folder…</button></span></div>
       </div>
-      <div className="about-sec set-last-sec"><div className="about-row"><span className="tx" /><span className="r"><button className="btnp btnp-primary" disabled={!destination || exporting} onClick={() => void exportNow()}>{exporting ? 'Exporting…' : 'Export'}</button></span></div>{message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}</div>
+      <div className="about-sec set-last-sec"><div className="about-row"><span className="tx" /><span className="r"><button className="btnp btnp-primary" disabled={!destination || exporting} onClick={() => void exportNow()}>{exporting ? 'Exporting…' : 'Export'}</button></span></div></div>
     </div>
     <p className="set-cap">CSV writes a folder (summary, daily, models, projects, sessions, tools, mcp). JSON writes one file (schema codeburn.export.v2).</p>
   </section>

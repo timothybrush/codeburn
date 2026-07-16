@@ -2,11 +2,13 @@ import { useRef } from 'react'
 
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
+import { SectionSkeleton } from '../components/Skeleton'
 import type { Section } from '../components/Sidebar'
 import { StaleBanner } from '../components/StaleBanner'
 import { usePolled } from '../hooks/usePolled'
 import { formatConverted } from '../lib/format'
 import { codeburn } from '../lib/ipc'
+import { motionClass } from '../lib/motion'
 import type { JsonPlanSummary, Period, PlanId, PlanProvider, QuotaProvider, QuotaWindow, StatusJson } from '../lib/types'
 import type { SettingsPane } from './Settings'
 
@@ -80,7 +82,7 @@ export function Plans({ period, refreshToken = 0, onNavigate }: { period: Period
           Add plan…
         </button>
       </div>
-      <div className="body">
+      <div className={motionClass('body', 'section-fade')}>
         {budgetReport.data && budgetReport.error && <StaleBanner error={budgetReport.error} />}
         {renderQuota(quota.data, quota.error)}
         {renderBudgetPlans(budgetReport.data, budgetReport.error, manualPlans)}
@@ -98,11 +100,7 @@ function renderQuota(data: QuotaProvider[] | null, error: ReturnType<typeof useP
         </Panel>
       )
     }
-    return (
-      <Panel title="Live quota">
-        <p className="quota-connection-note">loading quota…</p>
-      </Panel>
-    )
+    return <SectionSkeleton label="loading quota…" rows={3} />
   }
 
   if (data.length === 0) {
