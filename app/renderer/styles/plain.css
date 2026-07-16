@@ -832,11 +832,10 @@ td:first-child { font-size: var(--fs-body); font-weight: var(--fw-body); }
    added only through motionClass()/motionEnabled(); the media query is a
    belt-and-suspenders escape hatch. ————— */
 
-/* Sidebar living flame: an all-but-imperceptible idle flicker on the inner
-   tongue, pivoting from its base, several-second period, phase randomized
+/* Sidebar living flame: an all-but-imperceptible idle flicker on the whole
+   mark, pivoting from its base, several-second period, phase randomized
    per mount via an inline animation-delay. */
-.fm-core { transform-box: fill-box; transform-origin: 50% 90%; }
-.fm-flicker { animation: fm-flicker 4.5s ease-in-out infinite; }
+.fm-flicker { transform-box: fill-box; transform-origin: 50% 90%; animation: fm-flicker 4.5s ease-in-out infinite; }
 @keyframes fm-flicker {
   0%, 100% { transform: scale(1) skewX(0deg); }
   28% { transform: scale(1.015, 0.99) skewX(0.6deg); }
@@ -861,7 +860,7 @@ td:first-child { font-size: var(--fs-body); font-weight: var(--fw-body); }
   opacity: 0.5;
 }
 .splash-word {
-  font-size: 17px; font-weight: var(--fw-strong); letter-spacing: -0.01em; color: var(--ink);
+  font-size: var(--fs-kpi); font-weight: var(--fw-strong); letter-spacing: -0.01em; color: var(--ink);
 }
 
 .splash-lit .splash-mark {
