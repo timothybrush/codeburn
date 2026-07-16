@@ -59,6 +59,42 @@ function groupSortValue(sort: SessionSort, rows: SessionRow[]): number {
   return rows.reduce((latest, row) => Math.max(latest, endedAtTime(row)), 0)
 }
 
+function ProviderFilterRow({
+  provider,
+  detectedProviders,
+  onProviderChange,
+}: {
+  provider: string
+  detectedProviders: Array<{ id: string; label: string }>
+  onProviderChange: (value: string) => void
+}) {
+  if (detectedProviders.length === 0) return null
+  return (
+    <div className="seg session-provider-filter" role="group" aria-label="Filter sessions by provider">
+      <button
+        type="button"
+        className={provider === 'all' ? 'on' : undefined}
+        aria-pressed={provider === 'all'}
+        onClick={() => onProviderChange('all')}
+      >
+        All
+      </button>
+      {detectedProviders.map(entry => (
+        <button
+          key={entry.id}
+          type="button"
+          className={provider === entry.id ? 'on' : undefined}
+          aria-pressed={provider === entry.id}
+          onClick={() => onProviderChange(entry.id)}
+        >
+          <ProviderLogo provider={entry.id} size={14} />
+          {entry.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function Sessions({
   period,
   provider,
@@ -151,6 +187,7 @@ export function Sessions({
   if (!report.data.length) {
     return (
       <Panel title="Sessions">
+        <ProviderFilterRow provider={provider} detectedProviders={detectedProviders} onProviderChange={onProviderChange} />
         <EmptyNote>No sessions in this range yet.</EmptyNote>
       </Panel>
     )
@@ -163,30 +200,7 @@ export function Sessions({
   return (
     <div className="sessions-list-view">
       {report.error && <StaleBanner error={report.error} />}
-      {detectedProviders.length > 0 && (
-        <div className="seg session-provider-filter" role="group" aria-label="Filter sessions by provider">
-          <button
-            type="button"
-            className={provider === 'all' ? 'on' : undefined}
-            aria-pressed={provider === 'all'}
-            onClick={() => onProviderChange('all')}
-          >
-            All
-          </button>
-          {detectedProviders.map(entry => (
-            <button
-              key={entry.id}
-              type="button"
-              className={provider === entry.id ? 'on' : undefined}
-              aria-pressed={provider === entry.id}
-              onClick={() => onProviderChange(entry.id)}
-            >
-              <ProviderLogo provider={entry.id} size={14} />
-              {entry.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <ProviderFilterRow provider={provider} detectedProviders={detectedProviders} onProviderChange={onProviderChange} />
       <div className="sessions-toolbar">
         <input
           className="sessions-search"

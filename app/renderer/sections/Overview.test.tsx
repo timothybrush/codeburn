@@ -298,16 +298,16 @@ describe('Overview', () => {
     expect(within(risks).getByText(/Today's spend is 10× your typical/)).toBeInTheDocument()
   })
 
-  it('uses an honest empty state when no realized savings exist', async () => {
+  it('hides the applied-fixes line when there are no realized savings', async () => {
     const now = new Date()
     getOverview.mockResolvedValue(makePayload(now))
     getActReport.mockResolvedValue({ totals: { realizedCostUSD: 0, measuredActions: 7 } })
 
     render(<Overview period="30days" provider="all" />)
 
-    expect(await screen.findByText('across 0 fixes')).toBeInTheDocument()
     await waitFor(() => expect(getActReport).toHaveBeenCalled())
-    expect(screen.getByText('$0.00')).toBeInTheDocument()
+    expect(screen.queryByText('Saved by applied fixes')).not.toBeInTheDocument()
+    expect(screen.queryByText(/across \d+ fix/)).not.toBeInTheDocument()
   })
 
   it('zero-fills a contiguous 30-day window from sparse history', async () => {

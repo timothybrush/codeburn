@@ -81,6 +81,15 @@ export type ProviderSection = {
 export type SessionCache = {
   version: number
   providers: Record<string, ProviderSection>
+  /** True only once a full scan has run to completion. The throttled partial
+   *  saves during a cold hydration persist `false`; the single end-of-parse save
+   *  flips it `true`. A cache that is present-but-incomplete (an interrupted cold
+   *  start left a partial behind) must be treated as still cold — otherwise the
+   *  emptiness heuristic reads the partial as warm, the cross-process hydration
+   *  lock never engages, and totals heal only gradually while a concurrent parse
+   *  can freeze a partial daily history. Absent on caches written before this
+   *  field existed → read as incomplete (one self-healing re-hydration). */
+  complete?: boolean
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -186,7 +195,14 @@ export function computeEnvFingerprint(provider: string): string {
 // ── Load / Save ────────────────────────────────────────────────────────
 
 export function emptyCache(): SessionCache {
-  return { version: CACHE_VERSION, providers: {} }
+  return { version: CACHE_VERSION, providers: {}, complete: false }
+}
+
+/** A cache is warm only when a full scan finished against it. Empty-but-marked
+ *  (a machine with no sessions) is complete; present-but-unmarked (an interrupted
+ *  cold start, or a pre-marker cache) is NOT — it is still cold. */
+export function isCacheComplete(cache: SessionCache): boolean {
+  return cache.complete === true
 }
 
 function isNum(v: unknown): v is number {

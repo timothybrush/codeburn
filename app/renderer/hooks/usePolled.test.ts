@@ -115,6 +115,34 @@ describe('usePolled', () => {
     expect(result.current.switching).toBe(false)
   })
 
+  it('clears stale data on a switch to an unmemoized key (skeleton, never the prior filter)', async () => {
+    const resolvers: Array<(v: string) => void> = []
+    const fetcher = vi.fn(() => new Promise<string>(resolve => { resolvers.push(resolve) }))
+
+    const { result, rerender } = renderHook(
+      ({ k }: { k: string }) => usePolled(fetcher, [k], { memoKey: k }),
+      { initialProps: { k: 'miss-A' } },
+    )
+    await act(async () => { resolvers[0]!('A0') })
+    expect(result.current.data).toBe('A0')
+
+    // Switch to a brand-new key with nothing memoized: data must drop to null so
+    // the section paints its skeleton, NOT the previous filter's numbers. This is
+    // the "old numbers for 2-3s on switch" fix — no cache hit, no stale hold.
+    rerender({ k: 'miss-B' })
+    expect(result.current.data).toBeNull()
+    expect(result.current.switching).toBe(false)
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => { resolvers[1]!('B0') })
+    expect(result.current.data).toBe('B0')
+
+    // A background re-poll on the SAME key (its last result is memoized) must keep
+    // showing data — the clear-on-miss must never blank a plain refresh.
+    act(() => { result.current.refresh() })
+    expect(result.current.data).toBe('B0')
+  })
+
   it('manual cadence (null interval) polls only on mount + refresh, never on a timer', async () => {
     vi.useFakeTimers()
     try {

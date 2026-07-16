@@ -87,9 +87,10 @@ describe('Splash', () => {
     expect(document.querySelector('.splash-status')).toBeNull()
 
     act(() => {
-      progressCb?.({ kind: 'providers', providers: ['claude', 'codex'] })
+      // The leading `providers` event carries cold:true only on a genuine full
+      // hydration — that, and only that, reveals the indexing detail.
+      progressCb?.({ kind: 'providers', cold: true, providers: ['claude', 'codex'] })
       progressCb?.({ kind: 'provider', provider: 'claude', state: 'start' })
-      // A nonzero-total tick means the cache is genuinely cold: reveal at once.
       progressCb?.({ kind: 'tick', provider: 'claude', done: 120, total: 480 })
     })
 
@@ -106,6 +107,23 @@ describe('Splash', () => {
     expect(document.querySelector('.splash-prov.done')?.getAttribute('title')).toBe('Claude')
     // No active provider left: the line falls back to the generic copy.
     expect(document.querySelector('.splash-status-line')?.textContent).toBe('Indexing your usage history…')
+  })
+
+  it('never reveals the indexing status on a warm launch (providers/ticks without cold)', () => {
+    render(<Splash hasData={false} hasError={false} />)
+    expect(splashEl()).toBeInTheDocument()
+
+    act(() => {
+      // A warm launch's incremental re-parse streams the same providers/provider/
+      // tick events, but the providers event has NO cold flag. The strip must stay
+      // hidden — this is the "indexing on every launch" bug fix.
+      progressCb?.({ kind: 'providers', cold: false, providers: ['claude', 'codex'] })
+      progressCb?.({ kind: 'provider', provider: 'claude', state: 'start' })
+      progressCb?.({ kind: 'tick', provider: 'claude', done: 40, total: 60 })
+      progressCb?.({ kind: 'provider', provider: 'claude', state: 'done' })
+    })
+
+    expect(document.querySelector('.splash-status')).toBeNull()
   })
 
   it('swaps instantly under reduced motion (no fade, no min-time)', () => {

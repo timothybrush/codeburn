@@ -284,6 +284,17 @@ the same machine (no quarantine attribute is applied to files that were never
 downloaded) — they only apply to a build distributed to someone else, e.g.
 via a GitHub Release.
 
+### Folder-access prompts re-appear on every update
+
+CodeBurn requests access to folders like Documents, Desktop, and Downloads
+(via `mac.extendInfo` in `app/package.json`) to read local AI coding tool
+session logs. Because each ad-hoc/unsigned build has no stable Developer ID,
+macOS TCC treats every rebuild as a new app identity, so users get
+re-prompted for folder access after each update even though nothing else
+changed. Signing with a stable Developer ID certificate (see "Upgrade path"
+below) fixes this — TCC grants persist across updates once the app's
+identity is stable.
+
 ## Upgrade path: paid account + notarization
 
 When a paid Apple Developer Program membership is available, the same

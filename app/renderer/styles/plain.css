@@ -162,6 +162,7 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .about-modal-logo { display: inline-block; width: 52px; height: 52px; margin-bottom: 12px; }
 .about-modal-name { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
 .about-modal-version { margin-top: 5px; color: var(--mut2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.about-modal-build { margin-top: 2px; color: var(--mut2); font-size: 10.5px; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .about-modal-tagline { max-width: 32ch; margin: 11px auto 0; color: var(--mut); font-size: 12.5px; line-height: 1.5; }
 .about-modal-side { display: flex; flex-direction: column; }
 .about-modal-section { padding: 14px 18px; border-bottom: 1px solid var(--line2); }
@@ -881,6 +882,9 @@ td:first-child { font-size: var(--fs-body); font-weight: var(--fw-body); }
 }
 .splash-version {
   margin-top: 2px; font-size: var(--fs-label); font-weight: var(--fw-body); color: #b3a595;
+}
+.splash-build {
+  margin-top: 1px; font-size: var(--fs-label); font-weight: var(--fw-body); color: #6f665c; font-variant-numeric: tabular-nums;
 }
 
 .splash-lit .splash-mark {

@@ -6,14 +6,12 @@ import { ProviderLogo } from './ProviderLogo'
 import { motionClass, motionEnabled, reducedMotion } from '../lib/motion'
 import { codeburn } from '../lib/ipc'
 import type { ScanProgressEvent } from '../lib/types'
+import { BUILD_STAMP } from '../lib/build'
 import { version } from '../../package.json'
 import loaderVideo from '../assets/splash-loader.webm'
 
 const MIN_ON_SCREEN_MS = 600
 const CROSSFADE_MS = 250
-// If the first scan is still running this long after boot, reveal the per-provider
-// indexing detail. Warm launches resolve well before this, so they never show it.
-const REVEAL_FALLBACK_MS = 3500
 
 type Phase = 'lit' | 'out' | 'done'
 type ProvStatus = 'pending' | 'active' | 'done'
@@ -24,28 +22,29 @@ type Progress = {
   status: Record<string, ProvStatus>
   claudeDone: number
   claudeTotal: number
-  /** A tick with a nonzero total — the cache is genuinely cold and parsing. */
-  realWork: boolean
-  /** Any progress event at all has arrived (distinguishes a new CLI from old). */
-  seen: boolean
+  /** True only for a genuine cold hydration (the CLI's `providers` event carries
+   *  `cold: true`). A warm launch's incremental re-parse of a few changed files
+   *  emits the same providers/tick stream WITHOUT this, so it never reveals the
+   *  indexing detail. */
+  cold: boolean
 }
 
-const EMPTY: Progress = { order: [], status: {}, claudeDone: 0, claudeTotal: 0, realWork: false, seen: false }
+const EMPTY: Progress = { order: [], status: {}, claudeDone: 0, claudeTotal: 0, cold: false }
 
 function reduceProgress(state: Progress, event: ScanProgressEvent): Progress {
   switch (event.kind) {
     case 'providers': {
       const status: Record<string, ProvStatus> = {}
       for (const p of event.providers) status[p] = state.status[p] ?? 'pending'
-      return { ...state, order: event.providers, status, seen: true }
+      return { ...state, order: event.providers, status, cold: state.cold || event.cold === true }
     }
     case 'provider': {
       const order = state.order.includes(event.provider) ? state.order : [...state.order, event.provider]
       const next: ProvStatus = event.state === 'done' ? 'done' : 'active'
-      return { ...state, order, status: { ...state.status, [event.provider]: next }, seen: true }
+      return { ...state, order, status: { ...state.status, [event.provider]: next } }
     }
     case 'tick':
-      return { ...state, claudeDone: event.done, claudeTotal: event.total, realWork: state.realWork || event.total > 0, seen: true }
+      return { ...state, claudeDone: event.done, claudeTotal: event.total }
     case 'done': {
       const status = { ...state.status }
       for (const p of state.order) status[p] = 'done'
@@ -98,10 +97,11 @@ function SplashStatus({ progress }: { progress: Progress }) {
  * bring it back.
  *
  * On a genuinely cold first run the overview warmup streams per-provider scan
- * progress (main.ts forwards the CLI's stderr). Once real parse work is detected
- * (or the scan simply outlasts REVEAL_FALLBACK_MS), the splash reveals a compact
- * status block (see SplashStatus). A warm launch resolves before that threshold
- * and never shows it.
+ * progress (main.ts forwards the CLI's stderr) and the leading `providers` event
+ * carries `cold: true`; that — and only that — reveals the compact indexing
+ * status block (see SplashStatus). A warm launch's incremental re-parse emits the
+ * same provider/tick stream without the cold flag, so the splash stays a plain
+ * flame and dismisses the moment data arrives.
  */
 export function Splash({ hasData, hasError }: { hasData: boolean; hasError: boolean }) {
   const [phase, setPhase] = useState<Phase>('lit')
@@ -109,7 +109,6 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
   const [reveal, setReveal] = useState(false)
   const shownAt = useRef(Date.now())
   const done = useRef(false)
-  const seenRef = useRef(false)
 
   // Subscribe once to cold-start progress. `codeburn` is undefined outside the
   // Electron preload (e.g. unit tests); guard so the splash still renders.
@@ -118,14 +117,9 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
     return codeburn.onProgress(event => setProgress(prev => reduceProgress(prev, event)))
   }, [])
 
-  useEffect(() => { seenRef.current = progress.seen }, [progress.seen])
-
-  // Real parse work reveals the detail at once; otherwise a slow-scan fallback.
-  useEffect(() => { if (progress.realWork) setReveal(true) }, [progress.realWork])
-  useEffect(() => {
-    const timer = setTimeout(() => { if (seenRef.current) setReveal(true) }, REVEAL_FALLBACK_MS)
-    return () => clearTimeout(timer)
-  }, [])
+  // Only a genuine cold hydration reveals the indexing detail. Warm launches
+  // never set `cold`, so the strip stays hidden and the flame dismisses fast.
+  useEffect(() => { if (progress.cold) setReveal(true) }, [progress.cold])
 
   useEffect(() => {
     if (done.current) return
@@ -169,6 +163,7 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
       )}
       <div className="splash-word">CodeBurn</div>
       <div className="splash-version">v{version}</div>
+      <div className="splash-build">{BUILD_STAMP}</div>
       {showDetail && <SplashStatus progress={progress} />}
     </div>,
     document.body,

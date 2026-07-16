@@ -2,6 +2,7 @@ import { useEffect, type MouseEvent, type ReactNode } from 'react'
 
 import { version } from '../../package.json'
 import { FlameMark } from './FlameMark'
+import { BUILD_STAMP } from '../lib/build'
 import { codeburn } from '../lib/ipc'
 
 export type SocialLink = {
@@ -42,6 +43,7 @@ export function AboutModal({ socials, onClose }: { socials: SocialLink[]; onClos
             <span className="about-modal-logo" aria-hidden="true"><FlameMark size={52} /></span>
             <div className="about-modal-name" id="about-modal-title">CodeBurn</div>
             <div className="about-modal-version">v{version}</div>
+            <div className="about-modal-build">{BUILD_STAMP}</div>
             <div className="about-modal-tagline">Know where every token goes, across every AI coding tool.</div>
           </div>
           <div className="about-modal-side">

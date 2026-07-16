@@ -243,6 +243,22 @@ describe('Sessions', () => {
     expect(await screen.findByText('No sessions in this range yet.')).toBeInTheDocument()
   })
 
+  it('keeps the provider quick-filter visible in the empty state so a filtered-out user can switch back', async () => {
+    const user = userEvent.setup()
+    getSessions.mockResolvedValue([])
+    const onProviderChange = vi.fn()
+    const detected = [
+      { id: 'claude', label: 'Claude' },
+      { id: 'codex', label: 'Codex' },
+    ]
+    render(<Sessions period="week" provider="gemini" detectedProviders={detected} onProviderChange={onProviderChange} />)
+    await screen.findByText('No sessions in this range yet.')
+
+    const filter = screen.getByRole('group', { name: /provider/i })
+    await user.click(within(filter).getByRole('button', { name: 'All' }))
+    expect(onProviderChange).toHaveBeenCalledWith('all')
+  })
+
   it('lifts provider quick-filter clicks to the app callback with the internal id', async () => {
     const user = userEvent.setup()
     getSessions.mockResolvedValue(rows)

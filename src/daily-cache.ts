@@ -70,6 +70,12 @@ export type DailyCache = {
   savingsConfigHash: string
   lastComputedDate: string | null
   days: DailyEntry[]
+  /// True only once the full backfill window has been hydrated from a COMPLETE
+  /// session parse. A cache that was finalized against a partial (interrupted)
+  /// session hydration — the "chart is empty for the first ~20 days" bug — reads
+  /// as incomplete and is fully re-backfilled. Absent on caches written before
+  /// this field existed → treated as incomplete (one self-healing re-backfill).
+  complete?: boolean
 }
 
 function getCacheDir(): string {
@@ -90,10 +96,10 @@ export function dailyCachePath(): string {
 }
 
 export function emptyCache(savingsConfigHash = ''): DailyCache {
-  return { version: DAILY_CACHE_VERSION, savingsConfigHash, lastComputedDate: null, days: [] }
+  return { version: DAILY_CACHE_VERSION, savingsConfigHash, lastComputedDate: null, days: [], complete: false }
 }
 
-function isMigratableCache(parsed: unknown): parsed is { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[] } {
+function isMigratableCache(parsed: unknown): parsed is { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[]; complete?: boolean } {
   if (!parsed || typeof parsed !== 'object') return false
   const c = parsed as Partial<DailyCache>
   if (typeof c.version !== 'number') return false
@@ -120,12 +126,15 @@ function migrateDays(days: Record<string, unknown>[]): DailyEntry[] {
   }))
 }
 
-function migratedFrom(parsed: { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[] }): DailyCache {
+function migratedFrom(parsed: { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[]; complete?: boolean }): DailyCache {
   return {
     version: DAILY_CACHE_VERSION,
     savingsConfigHash: parsed.savingsConfigHash ?? '',
     lastComputedDate: parsed.lastComputedDate,
     days: migrateDays(parsed.days),
+    // Only a cache explicitly marked complete stays trusted; one written before
+    // the marker existed reads false and is re-backfilled once.
+    complete: parsed.complete === true,
   }
 }
 
@@ -215,6 +224,7 @@ export function addNewDays(cache: DailyCache, incoming: DailyEntry[], newestDate
     savingsConfigHash: cache.savingsConfigHash,
     lastComputedDate: nextLast,
     days: pruned,
+    complete: cache.complete,
   }
 }
 
@@ -249,6 +259,12 @@ export async function ensureCacheHydrated(
   /// longer accurate, so we treat the cache as stale and force a full
   /// re-hydration. Pass `''` for "no savings config" to disable.
   savingsConfigHash: string = '',
+  /// Whether the session parse that fed this backfill left the session cache
+  /// fully hydrated. A partial (interrupted) session cache yields empty/partial
+  /// older days; finalizing them would freeze that gap into the daily history.
+  /// So the backfill is only marked `complete` when this returns true. Defaults
+  /// to a trusting `true` for callers that don't (or can't) supply it.
+  sessionComplete: () => boolean = () => true,
 ): Promise<DailyCache> {
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -258,16 +274,21 @@ export async function ensureCacheHydrated(
   return withDailyCacheLock(async () => {
     let c = await loadDailyCache()
 
-    // Savings config changed: roll the cache forward into the active
-    // mapping. We can't cheaply recompute savings for already-cached
-    // historical days without re-parsing every session, so we drop the
-    // cached days and re-hydrate from the daily cache retention window.
-    if (c.savingsConfigHash !== savingsConfigHash) {
+    // Two reasons to drop the cached days and re-hydrate the whole retention
+    // window:
+    //  1. Savings config changed — the cached `savingsUSD` totals are stale, and
+    //     we can't cheaply recompute them per historical day without re-parsing.
+    //  2. The cache was never finalized against a COMPLETE session parse (an old
+    //     pre-marker cache, or one frozen from a partial/interrupted hydration).
+    //     Its older days may be empty or partial; trusting `lastComputedDate`
+    //     would leave that gap forever (the "first ~20 days missing" bug).
+    if (c.savingsConfigHash !== savingsConfigHash || c.complete !== true) {
       c = {
         version: DAILY_CACHE_VERSION,
         savingsConfigHash,
         lastComputedDate: null,
         days: [],
+        complete: false,
       }
     }
 
@@ -296,6 +317,17 @@ export async function ensureCacheHydrated(
       const gapProjects = await parseSessions(gapRange)
       const gapDays = aggregateDays(gapProjects)
       c = addNewDays(c, gapDays, yesterdayStr)
+      // Finalize as complete ONLY when the session parse that produced these days
+      // was itself complete. If it was partial, leave `complete: false` so the
+      // next launch (once the session cache is whole) re-backfills instead of
+      // freezing the partial history.
+      c = { ...c, complete: sessionComplete() }
+      await saveDailyCache(c)
+    } else if (c.complete !== true && sessionComplete()) {
+      // No gap to fill (already current through yesterday) but not yet marked —
+      // e.g. a brand-new machine whose only data is today. Finalize so future
+      // launches don't re-backfill the whole window every time.
+      c = { ...c, complete: true }
       await saveDailyCache(c)
     }
     return c

@@ -76,7 +76,12 @@
       "icon": "build/icon.png",
       "identity": "-",
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "CodeBurn reads your local AI coding tool session logs (Claude Code, Codex, Cursor, and others) to calculate your token usage and cost. Your data never leaves your machine.",
+        "NSDesktopFolderUsageDescription": "CodeBurn reads your local AI coding tool session logs (Claude Code, Codex, Cursor, and others) to calculate your token usage and cost. Your data never leaves your machine.",
+        "NSDownloadsFolderUsageDescription": "CodeBurn reads your local AI coding tool session logs (Claude Code, Codex, Cursor, and others) to calculate your token usage and cost. Your data never leaves your machine."
+      }
     },
     "dmg": {},
     "win": {

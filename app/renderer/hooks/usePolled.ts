@@ -50,6 +50,20 @@ export function __resetPolledMemo(): void {
   memoStore.clear()
 }
 
+/** Seed the instant-switch memo out of band. The prefetcher (App.tsx) warms the
+ *  overview result for every detected provider so a picker switch to one paints
+ *  from memory in the same frame instead of waiting on a fresh CLI spawn. Keyed
+ *  identically to the corresponding usePolled `memoKey`. */
+export function primePolledMemo(key: string, value: unknown): void {
+  memoSet(key, value)
+}
+
+/** Whether a live result is already memoized for `key` (does not affect recency).
+ *  Lets the prefetcher skip providers it has already warmed. */
+export function hasPolledMemo(key: string): boolean {
+  return memoStore.has(key)
+}
+
 /**
  * Generic CLI-backed data hook: fetches on mount + whenever `deps` change, then
  * re-polls every `intervalMs`. Errors are normalized to the CliError shape so
@@ -92,11 +106,15 @@ export function usePolled<T>(
     const epoch = ++epochRef.current
     // Instant paint: on a deps/key change, if a last-good result for the new key
     // is cached, show it immediately and flag `switching` while the fresh fetch
-    // runs. Otherwise fall back to the normal loading state.
+    // runs. If there is NO cached result for the new key, clear stale data so the
+    // section paints its loading/skeleton state — never the previous filter's
+    // numbers. (An interval re-poll keeps the same key, whose last result is
+    // always cached, so a background refresh never blanks.)
     let servedCached = false
     if (memoKey) {
       const cached = memoGet<T>(memoKey)
       if (cached !== undefined) { setData(cached); servedCached = true }
+      else setData(null)
     }
     setLoading(true)
     setSwitching(servedCached)

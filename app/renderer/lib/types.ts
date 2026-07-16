@@ -561,9 +561,11 @@ export type TelemetryStatus = {
   onboarded: boolean
 }
 
-/** Cold-start scan progress streamed from the CLI warmup (src/parser.ts). */
+/** Cold-start scan progress streamed from the CLI warmup (src/parser.ts).
+ * `cold` (on the `providers` event) is true only for a genuine full hydration;
+ * a warm launch's incremental re-parse emits the same events without it. */
 export type ScanProgressEvent =
-  | { kind: 'providers'; providers: string[] }
+  | { kind: 'providers'; providers: string[]; cold?: boolean }
   | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
   | { kind: 'tick'; provider: string; done: number; total: number }
   | { kind: 'done' }

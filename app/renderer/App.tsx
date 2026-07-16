@@ -10,7 +10,7 @@ import { Splash } from './components/Splash'
 import { ToastHost } from './components/ToastHost'
 import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
-import { usePolled } from './hooks/usePolled'
+import { hasPolledMemo, primePolledMemo, usePolled } from './hooks/usePolled'
 import { readDailyBudget } from './lib/budget'
 import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
 import { motionClass } from './lib/motion'
@@ -76,6 +76,18 @@ const PERIOD_LABELS: Record<Period, string> = {
 }
 
 const STANDARD_PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
+
+// Instant-switch memo key for an overview result. Shared by the overview poll
+// and the provider prefetcher so the two never drift out of sync.
+function overviewMemoKey(provider: string, period: Period, range: DateRange | null, configSource: string | null): string {
+  return `overview|${provider}|${period}|${range?.from ?? ''}-${range?.to ?? ''}|${configSource ?? ''}`
+}
+
+// Prefetch pacing: wait a short idle after the first paint, then warm one
+// provider at a time at low priority so the background scan never competes with
+// the interaction the user is actually having.
+const PREFETCH_START_DELAY_MS = 1500
+const PREFETCH_STAGGER_MS = 400
 
 function isPeriod(value: string): value is Period {
   return (STANDARD_PERIODS as string[]).includes(value)
@@ -159,16 +171,20 @@ function AppMain() {
       ? codeburn.getOverview(period, provider, customRange)
       : codeburn.getOverview(period, provider),
     [period, provider, customRange?.from, customRange?.to, claudeConfigSource],
-    { memoKey: `overview|${provider}|${period}|${customRange?.from ?? ''}-${customRange?.to ?? ''}|${claudeConfigSource ?? ''}` },
+    { memoKey: overviewMemoKey(provider, period, customRange, claudeConfigSource) },
   )
   const refreshOverview = overview.refresh
 
   // Boot readiness: the overview poll is the single cold-cache warmer (long
   // timeout + progress). Other sections gate their first CLI spawn on this so a
   // cold first run hydrates ONCE here instead of fanning out into a parallel
-  // full-history parse per section. Flips true the moment overview has data OR a
-  // (resolved) error; after that everything polls normally.
-  const ready = overview.data != null || overview.error != null
+  // full-history parse per section. Flips true the moment overview first has data
+  // OR a (resolved) error; LATCHED, so a later uncached switch (which clears
+  // overview.data to paint a skeleton) can never re-gate the sections.
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if (overview.data != null || overview.error != null) setReady(true)
+  }, [overview.data, overview.error])
 
   // First-launch onboarding: shown until the telemetry consent screen has been
   // completed once. All telemetry bridge calls are typeof-guarded so an older
@@ -235,6 +251,38 @@ function AppMain() {
     setActiveCurrency(currency)
     setCurrencyTick(tick => tick + 1)
   }, [overview.data?.currency?.code, overview.data?.currency?.rate, overview.data?.currency?.symbol])
+
+  // Prefetch for millisecond switches: once the first overview has resolved,
+  // quietly warm the instant-switch memo for every OTHER detected provider at the
+  // current period, so a picker switch to one paints from memory instead of
+  // waiting on a fresh 2-3s CLI spawn. One provider at a time, lowest priority,
+  // and only for the plain view (no custom range / no config scope) the picker
+  // actually toggles between. The CLI's own read-cache + in-flight coalescing keep
+  // this from double-spawning against a live user fetch; hasPolledMemo skips any
+  // provider already warm (including one warmed by a real visit).
+  useEffect(() => {
+    if (!ready || overview.data == null || customRange || claudeConfigSource) return
+    const targets = detectedProviders.map(entry => entry.id).filter(id => id !== provider)
+    if (targets.length === 0) return
+    let cancelled = false
+    const warm = async () => {
+      for (const id of targets) {
+        if (cancelled) return
+        const key = overviewMemoKey(id, period, null, null)
+        if (hasPolledMemo(key)) continue
+        try {
+          const value = await codeburn.getOverview(period, id)
+          if (!cancelled) primePolledMemo(key, value)
+        } catch { /* best-effort warm; a real switch will fetch and surface any error */ }
+        if (!cancelled) await new Promise(resolve => setTimeout(resolve, PREFETCH_STAGGER_MS))
+      }
+    }
+    const start = setTimeout(() => { void warm() }, PREFETCH_START_DELAY_MS)
+    return () => { cancelled = true; clearTimeout(start) }
+    // `overview.data == null` (a boolean) gates on first-resolution without
+    // re-running every poll; the data content itself is intentionally not a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, period, provider, customRange, claudeConfigSource, detectedProviders, overview.data == null])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)

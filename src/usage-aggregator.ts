@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, type ClaudeConfigSelector, buildMenubarPayload } from './menubar-json.js'
-import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource } from './parser.js'
+import { parseAllSessions, filterProjectsByName, filterProjectsByDays, filterProjectsByClaudeConfigSource, isSessionHydrationComplete } from './parser.js'
 import { findUnpricedModels, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName } from './models.js'
 import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { claude, getClaudeConfigDirs, getDesktopSessionsDir } from './providers/claude.js'
@@ -74,6 +74,9 @@ async function hydrateCache(): Promise<DailyCache> {
       (range) => parseAllSessions(range, 'all'),
       aggregateProjectsIntoDays,
       getDailyCacheConfigHash(),
+      // Never finalize the daily history off a partial (interrupted) session
+      // hydration — that is what froze empty older days into the chart.
+      isSessionHydrationComplete,
     )
   } catch (err) {
     // Previously swallowed silently, which turned any backfill failure into an

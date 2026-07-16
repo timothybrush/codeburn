@@ -177,6 +177,7 @@ describe('loadDailyCache', () => {
       savingsConfigHash: 'cfg-hash-1',
       lastComputedDate: '2026-04-10',
       days: [emptyDay('2026-04-09', 12.5, 40), emptyDay('2026-04-10', 7.25, 28)],
+      complete: true,
     }
     await saveDailyCache(saved)
     const loaded = await loadDailyCache()
@@ -310,6 +311,7 @@ describe('ensureCacheHydrated', () => {
       savingsConfigHash: '',
       lastComputedDate: '2026-06-11',
       days: [emptyDay('2026-06-11', 5, 10)],
+      complete: true,
     }
     await saveDailyCache(saved)
 
@@ -337,6 +339,7 @@ describe('ensureCacheHydrated', () => {
       savingsConfigHash: '',
       lastComputedDate: '2026-06-12',
       days: [emptyDay('2026-06-11', 5, 10), emptyDay('2026-06-12', 9, 20)],
+      complete: true,
     }
     await saveDailyCache(saved)
 
@@ -385,6 +388,7 @@ describe('ensureCacheHydrated: savings config invalidation', () => {
       savingsConfigHash: 'cfg-A',
       lastComputedDate: twoDaysAgoStr,
       days: [emptyDay(twoDaysAgoStr, 1.5, 3)],
+      complete: true,
     }
     await saveDailyCache(seeded)
 
@@ -402,6 +406,7 @@ describe('ensureCacheHydrated: savings config invalidation', () => {
       savingsConfigHash: 'cfg-C',
       lastComputedDate: twoDaysAgoStr,
       days: [emptyDay(twoDaysAgoStr, 1.5, 3)],
+      complete: true,
     }
     await saveDailyCache(seeded2)
     const preserved = await ensureCacheHydrated(parseSessions, aggregateDays, 'cfg-C')

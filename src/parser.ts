@@ -20,6 +20,7 @@ import {
   computeEnvFingerprint,
   DURABLE_PROVIDER_NAMES,
   fingerprintFile,
+  isCacheComplete,
   loadCache,
   reconcileFile,
   saveCache,
@@ -2097,7 +2098,11 @@ export function setInteractiveScanUI(active = true): void {
 // createScanProgress's `\r` TTY line (that one never fires under a piped spawn).
 export const PROGRESS_LINE_PREFIX = 'CODEBURN_PROGRESS '
 export type ScanProgressEvent =
-  | { kind: 'providers'; providers: string[] }
+  // `cold` is true only for a genuine full hydration (the on-disk cache was
+  // empty). A warm launch's incremental re-parse of a handful of changed files
+  // still emits `providers`/`tick`, so consumers must gate any "indexing" UI on
+  // this flag, not on the mere presence of tick work.
+  | { kind: 'providers'; providers: string[]; cold?: boolean }
   | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
   | { kind: 'tick'; provider: string; done: number; total: number }
 
@@ -2555,6 +2560,15 @@ export function filterProjectsByDateRange(projects: ProjectSummary[], dateRange:
   return filtered.sort((a, b) => b.totalCostUSD - a.totalCostUSD)
 }
 
+// Reflects whether the most recently completed parse left the session cache
+// fully hydrated. The daily backfill reads this so it never finalizes history
+// built on a partial (interrupted) session cache. Set only at the end of a
+// runParse that reaches completion; a killed run leaves it false.
+let sessionHydrationComplete = false
+export function isSessionHydrationComplete(): boolean {
+  return sessionHydrationComplete
+}
+
 export async function parseAllSessions(dateRange?: DateRange, providerFilter?: string): Promise<ProjectSummary[]> {
   const key = cacheKey(dateRange, providerFilter)
   const cached = sessionCache.get(key)
@@ -2563,22 +2577,29 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
   let diskCache = await loadCache()
   await cleanupOrphanedTempFiles()
 
-  // Cold-hydration coordination (advisory, cross-process). Engages only when the
-  // on-disk cache is empty — a genuine full parse. If another live process is
-  // already hydrating, wait for it, then reload the now-warm cache instead of
-  // double-parsing (kills the menubar-vs-desktop cache clobber). Never a
-  // correctness gate: on any doubt it proceeds unlocked.
-  const hydration = await beginColdHydration(Object.keys(diskCache.providers).length === 0)
+  // Cold-hydration coordination (advisory, cross-process). Engages whenever the
+  // on-disk cache is not COMPLETE — an empty cache OR a partial one an interrupted
+  // cold start left behind. Keying on completeness (not mere non-emptiness) is
+  // what keeps a resumed partial hydration under the lock, so a concurrent menubar
+  // + desktop can't race their partial writes and freeze a partial daily history.
+  // If another live process is already hydrating, wait for it, then reload the
+  // now-warm cache instead of double-parsing. Never a correctness gate: on any
+  // doubt it proceeds unlocked.
+  const hydration = await beginColdHydration(!isCacheComplete(diskCache))
   if (hydration.waited) diskCache = await loadCache()
 
+  // Cold = this run finishes a genuine (possibly resumed) full parse. A warm run
+  // reconciles an already-complete corpus. Drives the splash's cold-only reveal
+  // and the daily backfill's "don't finalize partial history" guard.
+  const isCold = !isCacheComplete(diskCache)
   try {
-    return await runParse(key, diskCache, dateRange, providerFilter)
+    return await runParse(key, diskCache, dateRange, providerFilter, isCold)
   } finally {
     await hydration.release()
   }
 }
 
-async function runParse(key: string, diskCache: SessionCache, dateRange?: DateRange, providerFilter?: string): Promise<ProjectSummary[]> {
+async function runParse(key: string, diskCache: SessionCache, dateRange?: DateRange, providerFilter?: string, isCold = false): Promise<ProjectSummary[]> {
   const seenMsgIds = new Set<string>()
   const seenKeys = new Set<string>()
   const allSources = await discoverAllSessions(providerFilter)
@@ -2605,7 +2626,7 @@ async function runParse(key: string, diskCache: SessionCache, dateRange?: DateRa
     try { await saveCache(diskCache) } catch { /* best-effort partial save */ }
   }
 
-  emitScanProgress({ kind: 'providers', providers: [
+  emitScanProgress({ kind: 'providers', cold: isCold, providers: [
     ...(claudeSources.length > 0 ? ['claude'] : []),
     ...providerGroups.keys(),
   ] })
@@ -2650,9 +2671,18 @@ async function runParse(key: string, diskCache: SessionCache, dateRange?: DateRa
     otherProjects.push(...projects)
   }
 
-  if ((diskCache as { _dirty?: boolean })._dirty) {
+  // The full scan reached the end: this cache is now complete. Mark it and
+  // persist even when nothing else is dirty, so a pre-marker cache (or a partial
+  // that happened to already hold every current file) stops being re-read as cold
+  // on every launch, and the completeness marker the daily backfill + splash rely
+  // on is durable. A run killed before here never reaches this, so its throttled
+  // partial saves keep `complete: false` and the next launch resumes cold.
+  const wasComplete = isCacheComplete(diskCache)
+  if (!wasComplete) diskCache.complete = true
+  if ((diskCache as { _dirty?: boolean })._dirty || !wasComplete) {
     try { await saveCache(diskCache) } catch {}
   }
+  sessionHydrationComplete = true
 
   // Merge across providers by normalised project path so the same repository
   // is not double-counted when it was worked on with more than one tool
