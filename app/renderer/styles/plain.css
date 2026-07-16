@@ -965,6 +965,7 @@ td:first-child { font-size: var(--fs-body); font-weight: var(--fw-body); }
   font: inherit; font-size: var(--fs-label); color: #b3a595; text-decoration: underline; text-underline-offset: 3px;
 }
 .onboard-link:hover, .onboard-link:focus-visible { color: #f4f1ec; outline: none; }
+.onboard-hint { margin: 2px 0 0; max-width: 320px; font-size: var(--fs-label); line-height: 1.5; color: #8a7d6f; }
 .onboard-controls {
   margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
 }

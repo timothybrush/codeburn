@@ -5,7 +5,14 @@ import { homedir } from 'os'
 import { join } from 'path'
 import type { DateRange, ProjectSummary } from './types.js'
 
-// Bumped to 12: CodeWhale support adds historical usage that earlier rollups
+// Bumped to 13: day bucketing is now TURN-anchored (a turn's whole cost/calls
+// land on the day of its user-message timestamp) to match the live headline/
+// report rollup. v12 bucketed each call by its own timestamp, so a midnight-
+// straddling turn split across two days and history.daily / the provider
+// breakdown never reconciled to current.cost. Raising MIN_SUPPORTED_VERSION
+// forces the one-time re-hydration that rebuilds history under turn bucketing.
+//
+// v12: CodeWhale support adds historical usage that earlier rollups
 // did not contain. Both the CodeWhale branch and the kiro credit-pricing
 // change (below) claimed v11 independently, so v12 is the first version that
 // contains both; raising MIN_SUPPORTED_VERSION forces the one-time
@@ -26,8 +33,8 @@ import type { DateRange, ProjectSummary } from './types.js'
 // that older binaries skipped. v8 added local-model savings to the daily
 // rollup; the `savingsConfigHash` field is invalidated separately when the
 // user changes their `localModelSavings` mapping.
-export const DAILY_CACHE_VERSION = 12
-const MIN_SUPPORTED_VERSION = 12
+export const DAILY_CACHE_VERSION = 13
+const MIN_SUPPORTED_VERSION = 13
 // Version-suffixed so different binaries each own a distinct file and never
 // clobber an incompatible schema. Bumping the version mints a fresh filename.
 const DAILY_CACHE_FILENAME = `daily-cache.v${DAILY_CACHE_VERSION}.json`
@@ -68,6 +75,12 @@ export type DailyCache = {
   /// hash mismatches and `ensureCacheHydrated` discards the cached days
   /// so historical savings are recomputed against the current mapping.
   savingsConfigHash: string
+  /// IANA local timezone the days were bucketed under (day boundaries are
+  /// local-time). If the machine's timezone changes, previously-cached days are
+  /// bucketed against the wrong midnight, so a mismatch forces a full re-hydrate
+  /// (same self-heal as `savingsConfigHash`). Absent on caches written before
+  /// this field existed → not treated as a mismatch (no gratuitous rebuild).
+  tzKey?: string
   lastComputedDate: string | null
   days: DailyEntry[]
   /// True only once the full backfill window has been hydrated from a COMPLETE
@@ -80,6 +93,12 @@ export type DailyCache = {
 
 function getCacheDir(): string {
   return process.env['CODEBURN_CACHE_DIR'] ?? join(homedir(), '.cache', 'codeburn')
+}
+
+/** IANA name of the current local timezone (respects the TZ env var). Days are
+ *  bucketed by local midnight, so this tags the cache for TZ-change invalidation. */
+export function currentTzKey(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '' } catch { return '' }
 }
 
 function getCachePath(): string {
@@ -96,10 +115,10 @@ export function dailyCachePath(): string {
 }
 
 export function emptyCache(savingsConfigHash = ''): DailyCache {
-  return { version: DAILY_CACHE_VERSION, savingsConfigHash, lastComputedDate: null, days: [], complete: false }
+  return { version: DAILY_CACHE_VERSION, savingsConfigHash, tzKey: currentTzKey(), lastComputedDate: null, days: [], complete: false }
 }
 
-function isMigratableCache(parsed: unknown): parsed is { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[]; complete?: boolean } {
+function isMigratableCache(parsed: unknown): parsed is { version: number; lastComputedDate: string | null; savingsConfigHash?: string; tzKey?: string; days: Record<string, unknown>[]; complete?: boolean } {
   if (!parsed || typeof parsed !== 'object') return false
   const c = parsed as Partial<DailyCache>
   if (typeof c.version !== 'number') return false
@@ -126,10 +145,11 @@ function migrateDays(days: Record<string, unknown>[]): DailyEntry[] {
   }))
 }
 
-function migratedFrom(parsed: { version: number; lastComputedDate: string | null; savingsConfigHash?: string; days: Record<string, unknown>[]; complete?: boolean }): DailyCache {
+function migratedFrom(parsed: { version: number; lastComputedDate: string | null; savingsConfigHash?: string; tzKey?: string; days: Record<string, unknown>[]; complete?: boolean }): DailyCache {
   return {
     version: DAILY_CACHE_VERSION,
     savingsConfigHash: parsed.savingsConfigHash ?? '',
+    tzKey: parsed.tzKey,
     lastComputedDate: parsed.lastComputedDate,
     days: migrateDays(parsed.days),
     // Only a cache explicitly marked complete stays trusted; one written before
@@ -222,6 +242,7 @@ export function addNewDays(cache: DailyCache, incoming: DailyEntry[], newestDate
   return {
     version: DAILY_CACHE_VERSION,
     savingsConfigHash: cache.savingsConfigHash,
+    tzKey: cache.tzKey,
     lastComputedDate: nextLast,
     days: pruned,
     complete: cache.complete,
@@ -274,7 +295,7 @@ export async function ensureCacheHydrated(
   return withDailyCacheLock(async () => {
     let c = await loadDailyCache()
 
-    // Two reasons to drop the cached days and re-hydrate the whole retention
+    // Three reasons to drop the cached days and re-hydrate the whole retention
     // window:
     //  1. Savings config changed — the cached `savingsUSD` totals are stale, and
     //     we can't cheaply recompute them per historical day without re-parsing.
@@ -282,14 +303,25 @@ export async function ensureCacheHydrated(
     //     pre-marker cache, or one frozen from a partial/interrupted hydration).
     //     Its older days may be empty or partial; trusting `lastComputedDate`
     //     would leave that gap forever (the "first ~20 days missing" bug).
-    if (c.savingsConfigHash !== savingsConfigHash || c.complete !== true) {
+    //  3. The local timezone changed — days are bucketed by local midnight, so a
+    //     TZ change mis-buckets every cached day. Only invalidate when a tzKey is
+    //     present and differs (a cache written before this field, or a test
+    //     fixture, has none → left alone rather than force a spurious rebuild).
+    const tzKey = currentTzKey()
+    const tzChanged = c.tzKey !== undefined && c.tzKey !== tzKey
+    if (c.savingsConfigHash !== savingsConfigHash || c.complete !== true || tzChanged) {
       c = {
         version: DAILY_CACHE_VERSION,
         savingsConfigHash,
+        tzKey,
         lastComputedDate: null,
         days: [],
         complete: false,
       }
+    } else if (c.tzKey === undefined) {
+      // First write under the tzKey scheme: tag the cache so a later TZ change is
+      // detectable, without discarding the (still-valid, same-TZ) cached days.
+      c = { ...c, tzKey }
     }
 
     // Drop any cached entry dated today or later. The cache only ever stores

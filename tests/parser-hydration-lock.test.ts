@@ -135,4 +135,28 @@ describe('parseAllSessions hydration lock', () => {
     expect(totalOutput(result)).toBe(50)
     expect(existsSync(lockPath())).toBe(false)
   })
+
+  it('takes over a lock whose live holder dies mid-wait, then cleans it up', async () => {
+    await writeClaudeSession(50)
+    await mkdir(cacheDir, { recursive: true })
+
+    // A fresh lock held by a live process (pid 1): the cold parse starts waiting.
+    await writeFile(lockPath(), JSON.stringify({ pid: 1, at: Date.now() }))
+    let resolved = false
+    const promise = parseAllSessions(undefined, 'claude').then(r => { resolved = true; return r })
+    await delay(60)
+    expect(resolved).toBe(false) // still blocked on the live foreign lock
+
+    // The holder is SIGKILLed mid-scan: its pid goes dead and its lock is left
+    // behind (no clean release). The waiter must detect the dead pid, take over
+    // (re-parse under its own lock), and remove the leftover on release.
+    await writeFile(lockPath(), JSON.stringify({ pid: 2_147_483_646, at: Date.now() }))
+
+    const result = await promise
+    expect(resolved).toBe(true)
+    // Took over and re-parsed the source (50) rather than trusting a partial cache.
+    expect(totalOutput(result)).toBe(50)
+    // No leftover lock: the takeover acquired it and released it in the finally.
+    expect(existsSync(lockPath())).toBe(false)
+  })
 })

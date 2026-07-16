@@ -2057,6 +2057,16 @@ function warnProviderParseFailure(providerName: string, sourcePath: string, err:
   )
 }
 
+// A permission error (EPERM/EACCES) on a provider's data — e.g. a directory or
+// SQLite DB the OS won't let us read without Full Disk Access. Per-file and
+// discovery errors are already isolated; this catches a provider-level throw so
+// one locked provider skips-and-continues instead of aborting the whole
+// hydration (which would empty the cache/daily backfill for every provider).
+function isPermissionError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code
+  return code === 'EPERM' || code === 'EACCES'
+}
+
 // A cold-cache scan over a large ~/.claude/projects tree (hundreds of project
 // dirs, e.g. a git-worktree-per-task workflow) can run long enough that it
 // looks hung, and is CPU-heavy enough on a single thread to visibly compete
@@ -2103,7 +2113,7 @@ export type ScanProgressEvent =
   // still emits `providers`/`tick`, so consumers must gate any "indexing" UI on
   // this flag, not on the mere presence of tick work.
   | { kind: 'providers'; providers: string[]; cold?: boolean }
-  | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
+  | { kind: 'provider'; provider: string; state: 'start' | 'done' | 'skipped'; files?: number }
   | { kind: 'tick'; provider: string; done: number; total: number }
 
 export function emitScanProgress(event: ScanProgressEvent): void {
@@ -2639,15 +2649,30 @@ async function runParse(key: string, diskCache: SessionCache, dateRange?: DateRa
       : undefined,
   }))
   if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'start' })
-  const claudeProjects = await scanProjectDirs(claudeDirs, seenMsgIds, diskCache, dateRange, saveProgress)
-  if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'done', files: claudeSources.length })
+  let claudeProjects: ProjectSummary[] = []
+  try {
+    claudeProjects = await scanProjectDirs(claudeDirs, seenMsgIds, diskCache, dateRange, saveProgress)
+    if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'done', files: claudeSources.length })
+  } catch (err) {
+    if (!isPermissionError(err)) throw err
+    process.stderr.write(`codeburn: skipped claude data (permission denied; grant Full Disk Access to include it)\n`)
+    emitScanProgress({ kind: 'provider', provider: 'claude', state: 'skipped' })
+  }
 
   const otherProjects: ProjectSummary[] = []
   for (const [providerName, sources] of providerGroups) {
     emitScanProgress({ kind: 'provider', provider: providerName, state: 'start' })
-    const projects = await parseProviderSources(providerName, sources, seenKeys, diskCache, dateRange)
-    emitScanProgress({ kind: 'provider', provider: providerName, state: 'done', files: sources.length })
-    otherProjects.push(...projects)
+    try {
+      const projects = await parseProviderSources(providerName, sources, seenKeys, diskCache, dateRange)
+      emitScanProgress({ kind: 'provider', provider: providerName, state: 'done', files: sources.length })
+      otherProjects.push(...projects)
+    } catch (err) {
+      // A permission-locked provider skips-and-continues; any other error is a
+      // real bug and still aborts (per-file/DB-lock cases are handled deeper).
+      if (!isPermissionError(err)) throw err
+      process.stderr.write(`codeburn: skipped ${providerName} data (permission denied; grant Full Disk Access to include it)\n`)
+      emitScanProgress({ kind: 'provider', provider: providerName, state: 'skipped' })
+    }
     await saveProgress()
   }
 

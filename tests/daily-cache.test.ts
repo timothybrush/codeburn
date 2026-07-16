@@ -8,6 +8,7 @@ import type { ProjectSummary } from '../src/types.js'
 
 import {
   addNewDays,
+  currentTzKey,
   dailyCachePath,
   DAILY_CACHE_VERSION,
   type DailyCache,
@@ -309,6 +310,7 @@ describe('ensureCacheHydrated', () => {
     const saved: DailyCache = {
       version: DAILY_CACHE_VERSION,
       savingsConfigHash: '',
+      tzKey: currentTzKey(),
       lastComputedDate: '2026-06-11',
       days: [emptyDay('2026-06-11', 5, 10)],
       complete: true,
@@ -410,6 +412,46 @@ describe('ensureCacheHydrated: savings config invalidation', () => {
     }
     await saveDailyCache(seeded2)
     const preserved = await ensureCacheHydrated(parseSessions, aggregateDays, 'cfg-C')
+    expect(preserved.days).toHaveLength(1)
+    expect(preserved.days[0]!.date).toBe(twoDaysAgoStr)
+  })
+})
+
+describe('ensureCacheHydrated: timezone invalidation', () => {
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
+  const twoDaysAgoStr = `${twoDaysAgo.getFullYear()}-${String(twoDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(twoDaysAgo.getDate()).padStart(2, '0')}`
+  const parseSessions = async (): Promise<ProjectSummary[]> => []
+  const aggregateDays = (): DailyEntry[] => []
+
+  it('re-hydrates when the cached tzKey differs from the current timezone', async () => {
+    // Days are bucketed by local midnight, so a cache tagged under a different
+    // timezone mis-buckets every day and must be discarded (like a savings-hash
+    // mismatch). 'Test/OtherZone' can never equal a real IANA zone.
+    const seeded: DailyCache = {
+      version: DAILY_CACHE_VERSION,
+      savingsConfigHash: '',
+      tzKey: 'Test/OtherZone',
+      lastComputedDate: twoDaysAgoStr,
+      days: [emptyDay(twoDaysAgoStr, 1.5, 3)],
+      complete: true,
+    }
+    await saveDailyCache(seeded)
+    const rehydrated = await ensureCacheHydrated(parseSessions, aggregateDays, '')
+    expect(rehydrated.tzKey).toBe(currentTzKey())
+    expect(rehydrated.days).toEqual([])
+  })
+
+  it('keeps cached days when the tzKey matches the current timezone', async () => {
+    const seeded: DailyCache = {
+      version: DAILY_CACHE_VERSION,
+      savingsConfigHash: '',
+      tzKey: currentTzKey(),
+      lastComputedDate: twoDaysAgoStr,
+      days: [emptyDay(twoDaysAgoStr, 1.5, 3)],
+      complete: true,
+    }
+    await saveDailyCache(seeded)
+    const preserved = await ensureCacheHydrated(parseSessions, aggregateDays, '')
     expect(preserved.days).toHaveLength(1)
     expect(preserved.days[0]!.date).toBe(twoDaysAgoStr)
   })

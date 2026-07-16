@@ -1,5 +1,5 @@
 import { readFile, stat, open, rename, unlink, readdir, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { createHash, randomBytes } from 'crypto'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -546,6 +546,31 @@ async function removeOurLock(): Promise<void> {
   } catch { /* best-effort; a leaked lock is reclaimed as stale next cold start */ }
 }
 
+// Synchronous variant for the signal path: a handler can't await, so read + unlink
+// synchronously. Only unlinks a lock we actually own.
+function removeOurLockSync(): void {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath(), 'utf-8')) as Partial<LockRecord>
+    if (parsed?.pid === process.pid) unlinkSync(lockPath())
+  } catch { /* best-effort; nothing to clean or already gone */ }
+}
+
+// Arm once, only while we hold the lock: on a catchable termination (Ctrl-C, or a
+// SIGTERM from a parent) clean our lock before dying so a killed cold parse leaves
+// no leftover. SIGKILL can't be caught, so that path still relies on the next cold
+// start's stale-lock takeover. process.once + re-raise preserves the default exit.
+let signalCleanupArmed = false
+function armSignalCleanup(): void {
+  if (signalCleanupArmed) return
+  signalCleanupArmed = true
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, () => {
+      removeOurLockSync()
+      process.kill(process.pid, sig)
+    })
+  }
+}
+
 const releaseHandle: HydrationHandle = { waited: false, release: removeOurLock }
 
 function sleep(ms: number): Promise<void> {
@@ -567,19 +592,28 @@ function sleep(ms: number): Promise<void> {
 export async function beginColdHydration(isCold: boolean): Promise<HydrationHandle> {
   if (!isCold) return NOOP_HANDLE
   try {
-    if (await writeOurLock()) return releaseHandle
+    if (await writeOurLock()) { armSignalCleanup(); return releaseHandle }
     const existing = await readLockRecord()
     const fresh = existing !== null && Date.now() - existing.at < LOCK_FRESH_MS
     if (existing && fresh && pidLooksAlive(existing.pid)) {
       // Another live process owns a fresh lock: wait for it to release, go stale,
-      // or die, then let the caller reload the warm cache.
+      // or die. A CLEAN release means the cache is warm — reload it. Going stale or
+      // dying (e.g. a SIGKILLed cold scan) means the holder left partial data AND a
+      // leftover lock file: take over — clean the stale lock and re-acquire — so we
+      // re-parse under our own lock and remove the leftover on release, instead of
+      // leaving it for the next cold start to reclaim.
       const deadline = Date.now() + LOCK_WAIT_MAX_MS
+      let takeover = false
       while (Date.now() < deadline) {
         await sleep(LOCK_POLL_MS)
         const cur = await readLockRecord()
         if (!cur) break
-        if (Date.now() - cur.at >= LOCK_FRESH_MS) break
-        if (!pidLooksAlive(cur.pid)) break
+        if (Date.now() - cur.at >= LOCK_FRESH_MS) { takeover = true; break }
+        if (!pidLooksAlive(cur.pid)) { takeover = true; break }
+      }
+      if (takeover) {
+        try { await unlink(lockPath()) } catch { /* another process may have; fine */ }
+        if (await writeOurLock()) { armSignalCleanup(); return releaseHandle }
       }
       return { waited: true, release: async () => {} }
     }

@@ -40,7 +40,9 @@ function reduceProgress(state: Progress, event: ScanProgressEvent): Progress {
     }
     case 'provider': {
       const order = state.order.includes(event.provider) ? state.order : [...state.order, event.provider]
-      const next: ProvStatus = event.state === 'done' ? 'done' : 'active'
+      // 'skipped' (a permission-locked provider) is terminal like 'done' so it
+      // settles the strip instead of showing as perpetually active.
+      const next: ProvStatus = event.state === 'done' || event.state === 'skipped' ? 'done' : 'active'
       return { ...state, order, status: { ...state.status, [event.provider]: next } }
     }
     case 'tick':

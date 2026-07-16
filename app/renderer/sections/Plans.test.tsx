@@ -258,6 +258,33 @@ describe('Plans', () => {
     await waitFor(() => expect(getQuota).toHaveBeenCalledWith(true))
   })
 
+  it('renders the honest rate-limited note on a 429 backoff, per provider owner', async () => {
+    getPlans.mockResolvedValue(baseStatus)
+    getQuota.mockResolvedValue([
+      { provider: 'claude', connection: 'transientFailure', rateLimited: true, primary: null, details: [], planLabel: null, footerLines: [] },
+      { provider: 'codex', connection: 'stale', rateLimited: true, primary: null, details: [], planLabel: null, footerLines: [] },
+    ])
+
+    render(<Plans period="30days" />)
+
+    expect(await screen.findByText('Anthropic rate limited the quota endpoint, retrying in a few minutes')).toBeInTheDocument()
+    expect(screen.getByText('OpenAI rate limited the quota endpoint, retrying in a few minutes')).toBeInTheDocument()
+    // The rate-limited note replaces the generic waiting copy.
+    expect(screen.queryByText('waiting on the CLI…')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the generic waiting note when a transient failure is not rate limited', async () => {
+    getPlans.mockResolvedValue(baseStatus)
+    getQuota.mockResolvedValue([
+      { provider: 'claude', connection: 'transientFailure', rateLimited: false, primary: null, details: [], planLabel: null, footerLines: [] },
+    ])
+
+    render(<Plans period="30days" />)
+
+    expect(await screen.findByText('waiting on the CLI…')).toBeInTheDocument()
+    expect(screen.queryByText(/rate limited the quota endpoint/)).not.toBeInTheDocument()
+  })
+
   it('renders the keychain access-denied state with recovery copy and a locked indicator', async () => {
     getPlans.mockResolvedValue(statusWithPlans)
     getQuota.mockResolvedValue([

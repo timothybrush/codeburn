@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { EmptyNote } from './components/EmptyState'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -10,7 +10,7 @@ import { Splash } from './components/Splash'
 import { ToastHost } from './components/ToastHost'
 import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
-import { hasPolledMemo, primePolledMemo, usePolled } from './hooks/usePolled'
+import { hasPolledMemo, primePolledMemo, setPolledMemoMax, usePolled } from './hooks/usePolled'
 import { readDailyBudget } from './lib/budget'
 import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
 import { motionClass } from './lib/motion'
@@ -78,8 +78,9 @@ const PERIOD_LABELS: Record<Period, string> = {
 const STANDARD_PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
 
 // Instant-switch memo key for an overview result. Shared by the overview poll
-// and the provider prefetcher so the two never drift out of sync.
-function overviewMemoKey(provider: string, period: Period, range: DateRange | null, configSource: string | null): string {
+// and the provider prefetcher so the two never drift out of sync. Exported so
+// the prefetch-storm test can assert warmed keys survive between polls.
+export function overviewMemoKey(provider: string, period: Period, range: DateRange | null, configSource: string | null): string {
   return `overview|${provider}|${period}|${range?.from ?? ''}-${range?.to ?? ''}|${configSource ?? ''}`
 }
 
@@ -88,6 +89,13 @@ function overviewMemoKey(provider: string, period: Period, range: DateRange | nu
 // the interaction the user is actually having.
 const PREFETCH_START_DELAY_MS = 1500
 const PREFETCH_STAGGER_MS = 400
+// Base instant-switch memo keys live during overview polling besides the per-
+// provider prefetch entries: `overview|all`, `overview-act`, `overview-yield`,
+// plus one slot of headroom for section navigation. The memo cap is sized to
+// (detected providers + this) so warmed entries — and the base overview key —
+// never LRU-evict between polls (which would blank the overview and re-arm the
+// prefetch every cycle).
+const BASE_MEMO_KEYS = 4
 
 function isPeriod(value: string): value is Period {
   return (STANDARD_PERIODS as string[]).includes(value)
@@ -252,6 +260,12 @@ function AppMain() {
     setCurrencyTick(tick => tick + 1)
   }, [overview.data?.currency?.code, overview.data?.currency?.rate, overview.data?.currency?.symbol])
 
+  // Size the instant-switch memo to hold every prefetched provider overview plus
+  // the base keys, so warmed entries survive between polls instead of evicting.
+  useEffect(() => {
+    setPolledMemoMax(detectedProviders.length + BASE_MEMO_KEYS)
+  }, [detectedProviders.length])
+
   // Prefetch for millisecond switches: once the first overview has resolved,
   // quietly warm the instant-switch memo for every OTHER detected provider at the
   // current period, so a picker switch to one paints from memory instead of
@@ -260,6 +274,14 @@ function AppMain() {
   // actually toggles between. The CLI's own read-cache + in-flight coalescing keep
   // this from double-spawning against a live user fetch; hasPolledMemo skips any
   // provider already warm (including one warmed by a real visit).
+  //
+  // `warmedKeys` is a session-lifetime once-per-key guard: each (provider,period)
+  // memo key is marked BEFORE its spawn, so an effect re-run — e.g. an overview
+  // poll that momentarily blanked `overview.data` — can never re-spawn a provider
+  // already warmed. New keys (a new provider id, or a period switch) still warm
+  // exactly once. Without this the prefetch re-fired every poll: 12 redundant
+  // full-history CLI parses every 30s, forever.
+  const warmedKeys = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!ready || overview.data == null || customRange || claudeConfigSource) return
     const targets = detectedProviders.map(entry => entry.id).filter(id => id !== provider)
@@ -269,7 +291,8 @@ function AppMain() {
       for (const id of targets) {
         if (cancelled) return
         const key = overviewMemoKey(id, period, null, null)
-        if (hasPolledMemo(key)) continue
+        if (warmedKeys.current.has(key) || hasPolledMemo(key)) continue
+        warmedKeys.current.add(key)
         try {
           const value = await codeburn.getOverview(period, id)
           if (!cancelled) primePolledMemo(key, value)

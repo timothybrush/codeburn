@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { App } from './App'
+import { App, overviewMemoKey } from './App'
+import { __resetPolledMemo, hasPolledMemo } from './hooks/usePolled'
 import type { DateRange, MenubarPayload, OptimizeJsonReport, SpendFlow } from './lib/types'
 
 const stored = new Map<string, string>()
@@ -427,5 +428,76 @@ describe('App shortcuts', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Claude' }))
     await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'claude'))
     await waitFor(() => expect(screen.queryByText(/Daily budget exceeded/)).not.toBeInTheDocument())
+  })
+})
+
+describe('provider prefetch storm', () => {
+  const PROVIDERS = [
+    'claude', 'codex', 'gemini', 'grok', 'copilot', 'droid',
+    'hermes', 'zcode', 'cursor', 'kiro', 'codewhale', 'openrouter',
+  ]
+
+  function manyProviderPayload(): MenubarPayload {
+    const base = overviewPayload()
+    const providers: Record<string, number> = {}
+    PROVIDERS.forEach((id, i) => { providers[id] = PROVIDERS.length - i })
+    return { ...base, current: { ...base.current, providers } }
+  }
+
+  beforeEach(() => {
+    for (const mock of Object.values(mocks)) mock.mockReset()
+    mocks.getOverview.mockResolvedValue(manyProviderPayload())
+    mocks.getActReport.mockResolvedValue({ totals: { realizedCostUSD: 0, measuredActions: 0 } })
+    mocks.getYield.mockResolvedValue({
+      period: { label: 'Last 30 days', start: '', end: '' },
+      summary: {
+        productive: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        reverted: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        abandoned: { costUSD: 0, sessions: 0, costPercent: 0, sessionPercent: 0 },
+        total: { costUSD: 0, sessions: 0 },
+        productiveToRevertedCostRatio: null,
+      },
+      details: [],
+    })
+    localStorage.clear()
+    __resetPolledMemo()
+  })
+
+  // With MEMO_MAX too small (< providers + base keys) the base overview key
+  // LRU-evicts between polls, blanking the overview and re-arming the prefetch
+  // every 30s cycle: 12 redundant full-history parses forever. This asserts the
+  // fix — each provider is prefetched EXACTLY ONCE total across three cycles.
+  it('prefetches each detected provider exactly once across 3 poll cycles', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<App />)
+      // Let the mount overview resolve so `ready` flips and the prefetch arms.
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+      // Three full 30s poll cycles plus the prefetch start delay and staggered
+      // per-provider warms (12 × 400ms). A re-arming storm would re-spawn some
+      // providers on cycles 2 and 3; the once-per-key guard must prevent it.
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000 * 3 + 12_000) })
+
+      for (const id of PROVIDERS) {
+        const spawns = mocks.getOverview.mock.calls.filter(
+          c => c[0] === '30days' && c[1] === id && c[2] === undefined && c[3] === undefined,
+        )
+        expect(spawns.length, `prefetch spawns for ${id}`).toBe(1)
+      }
+
+      // Sanity: the active 'all' view was polled every cycle (not prefetch-gated).
+      const allPolls = mocks.getOverview.mock.calls.filter(c => c[1] === 'all')
+      expect(allPolls.length).toBeGreaterThanOrEqual(3)
+
+      // The memo must be sized to hold every warmed provider so none LRU-evict
+      // between polls — the eviction that (in the real app) blanked the base
+      // overview key and re-armed the prefetch. Under the old fixed cap of 8,
+      // 7 of these 12 keys would have been evicted by soak's end.
+      for (const id of PROVIDERS) {
+        expect(hasPolledMemo(overviewMemoKey(id, '30days', null, null)), `warm key ${id}`).toBe(true)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -566,7 +566,7 @@ export type TelemetryStatus = {
  * a warm launch's incremental re-parse emits the same events without it. */
 export type ScanProgressEvent =
   | { kind: 'providers'; providers: string[]; cold?: boolean }
-  | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
+  | { kind: 'provider'; provider: string; state: 'start' | 'done' | 'skipped'; files?: number }
   | { kind: 'tick'; provider: string; done: number; total: number }
   | { kind: 'done' }
 

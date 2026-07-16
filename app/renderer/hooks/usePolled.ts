@@ -20,10 +20,31 @@ export type Polled<T> = {
 // Module-level LRU of last-good results per memoKey. A section that switches deps
 // to a previously-seen key (e.g. a provider switch, or a switch-back) paints the
 // cached result in the same frame while a fresh fetch runs behind it — no blank,
-// no stale-freeze. ~8 entries is plenty for the handful of live (provider ×
-// period × range) combinations a user cycles through.
-const MEMO_MAX = 8
+// no stale-freeze.
+//
+// The cap must comfortably hold every key live at once: the base overview/act/
+// yield polls PLUS one prefetched overview per detected provider. Sized too small
+// it LRU-evicts the base `overview|all` key between polls, which blanks the
+// overview and re-triggers the provider prefetch every cycle (the prefetch
+// storm). The App raises it via setPolledMemoMax to (detected providers + base
+// keys); DEFAULT_MEMO_MAX is the floor for isolated hook/component tests.
+const DEFAULT_MEMO_MAX = 8
+const MEMO_MAX_CAP = 24
+let memoMax = DEFAULT_MEMO_MAX
 const memoStore = new Map<string, unknown>()
+
+/** Raise (or lower) the instant-switch memo cap so warmed entries survive between
+ *  polls. Clamped to [DEFAULT_MEMO_MAX, MEMO_MAX_CAP]; trims immediately if the
+ *  new cap is smaller than the current contents. Called by the App as the set of
+ *  detected providers grows. */
+export function setPolledMemoMax(n: number): void {
+  memoMax = Math.max(DEFAULT_MEMO_MAX, Math.min(MEMO_MAX_CAP, Math.floor(n)))
+  while (memoStore.size > memoMax) {
+    const oldest = memoStore.keys().next().value
+    if (oldest === undefined) break
+    memoStore.delete(oldest)
+  }
+}
 
 function memoGet<T>(key: string): T | undefined {
   if (!memoStore.has(key)) return undefined
@@ -37,7 +58,7 @@ function memoGet<T>(key: string): T | undefined {
 function memoSet(key: string, value: unknown): void {
   if (memoStore.has(key)) memoStore.delete(key)
   memoStore.set(key, value)
-  while (memoStore.size > MEMO_MAX) {
+  while (memoStore.size > memoMax) {
     const oldest = memoStore.keys().next().value
     if (oldest === undefined) break
     memoStore.delete(oldest)
@@ -48,6 +69,7 @@ function memoSet(key: string, value: unknown): void {
  *  one test never bleed into the next. */
 export function __resetPolledMemo(): void {
   memoStore.clear()
+  memoMax = DEFAULT_MEMO_MAX
 }
 
 /** Seed the instant-switch memo out of band. The prefetcher (App.tsx) warms the

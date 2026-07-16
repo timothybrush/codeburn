@@ -240,7 +240,31 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   if (!effectivelyScoped) {
     if (isAllProviders) {
       cache = await hydrateCache()
-      const todayProjects = await getTodayAllProjects()
+      const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
+      // Single all-provider scan for the requested window. Previously the overview
+      // parsed every provider TWICE — once over todayRange and once over the full
+      // period — even though the period scan already contains today's turns. Scan
+      // once here and derive the "today" slice from it below: aggregateProjects-
+      // IntoDays buckets by each turn's own timestamp, so a period scan's today
+      // slice is identical to a dedicated today scan's. A purely historical window
+      // (ends before today) never reaches today, so its separate today scan — the
+      // one the always-on daily-history strip needs — is left to run.
+      let rawScan: ProjectSummary[]
+      if (isTodayOnly) {
+        rawScan = fp(await parseAllSessions(todayRange, 'all'))
+        scanProjects = rawScan
+        scanRange = todayRange
+      } else {
+        rawScan = fp(await parseAllSessions(periodInfo.range, 'all'))
+        scanProjects = daysSelection ? filterProjectsByDays(rawScan, daysSelection.days) : rawScan
+        scanRange = periodInfo.range
+      }
+      // Seed the today memo from the un-daysSelection rawScan so the always-on
+      // daily-history strip still shows today even when the heatmap day filter
+      // excludes it (matching the old dedicated today scan, which ignored it).
+      if (rangeEndStr >= todayStr) {
+        todayAllDays = aggregateProjectsIntoDays(rawScan).filter(d => d.date === todayStr)
+      }
       const todayDays = await getTodayAllDays()
       const historicalDays = rangeStartStr <= historicalRangeEndStr
         ? getDaysInRange(cache, rangeStartStr, historicalRangeEndStr)
@@ -249,15 +273,6 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       const unfilteredDays = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
       const allDays = daysSelection ? unfilteredDays.filter(d => daysSelection.days.has(d.date)) : unfilteredDays
       currentData = buildPeriodDataFromDays(allDays, periodInfo.label)
-      const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
-      if (isTodayOnly) {
-        scanProjects = todayProjects
-        scanRange = todayRange
-      } else {
-        const rawProjects = fp(await parseAllSessions(periodInfo.range, 'all'))
-        scanProjects = daysSelection ? filterProjectsByDays(rawProjects, daysSelection.days) : rawProjects
-        scanRange = periodInfo.range
-      }
     } else {
       cache = await loadDailyCache()
       const rawProviderProjects = fp(await parseAllSessions(periodInfo.range, pf))

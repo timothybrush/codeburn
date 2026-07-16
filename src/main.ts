@@ -1204,7 +1204,10 @@ program
       ]
     }
 
-    if (periods.every(p => p.projects.length === 0)) {
+    if (periods.every(p => p.projects.length === 0) && opts.format !== 'json') {
+      // Human-readable prose for CSV / interactive use. JSON falls through and
+      // writes a valid, schema-matching file with empty arrays so programmatic
+      // consumers always get parseable output, never prose.
       console.log('\n  No usage data found.\n')
       return
     }
