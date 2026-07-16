@@ -99,7 +99,7 @@ const PROVIDER_ENV_VARS: Record<string, string[]> = {
   droid: ['FACTORY_DIR'],
   cursor: ['XDG_DATA_HOME'],
   'cursor-agent': ['XDG_DATA_HOME'],
-  opencode: ['XDG_DATA_HOME'],
+  opencode: ['XDG_DATA_HOME', 'OPENCODE_DATA_DIR', 'OPENCODE_DB_PREFIX'],
   goose: ['XDG_DATA_HOME'],
   crush: ['XDG_DATA_HOME'],
   warp: ['WARP_DB_PATH'],
