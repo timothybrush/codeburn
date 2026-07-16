@@ -4,6 +4,7 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Dropdown } from '../components/Dropdown'
 import { EmptyNote } from '../components/EmptyState'
 import { Panel } from '../components/Panel'
+import { SectionSkeleton } from '../components/Skeleton'
 import { usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
@@ -60,11 +61,7 @@ export function Compare({
 
   if (!models.data) {
     if (models.error) return <CliErrorPanel error={models.error} subject="model comparisons" />
-    return (
-      <Panel title="Compare">
-        <EmptyNote>Scanning model usage…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Scanning model usage…" rows={4} />
   }
 
   if (models.data.length < 2) {
@@ -144,11 +141,7 @@ function CompareReport({
 
   if (!report.data) {
     if (report.error) return <CliErrorPanel error={report.error} subject="model comparisons" />
-    return (
-      <Panel title="Compare">
-        <EmptyNote>Comparing models…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Comparing models…" rows={4} />
   }
 
   const performance = report.data.metrics.filter(metric => metric.section === 'Performance')

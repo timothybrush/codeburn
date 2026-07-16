@@ -133,11 +133,7 @@ function AuditLens({
 
   if (!report.data) {
     if (report.error) return <CliErrorPanel error={report.error} subject="the token audit" />
-    return (
-      <Panel title="Audit">
-        <EmptyNote>Auditing token usage…</EmptyNote>
-      </Panel>
-    )
+    return <SectionSkeleton label="Auditing token usage…" rows={5} />
   }
 
   return (
