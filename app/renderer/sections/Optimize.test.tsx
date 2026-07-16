@@ -227,10 +227,11 @@ describe('Optimize', () => {
     expect(screen.queryByRole('button', { name: 'Fixes 25' })).not.toBeInTheDocument()
   })
 
-  it('passes provider and custom range to the optimize report bridge', async () => {
+  it('passes provider and custom range to the optimize report and yield bridges', async () => {
     render(<Optimize period="30days" provider="claude" range={{ from: '2026-07-01', to: '2026-07-11' }} />)
     await screen.findByText('Opus is doing your small talk')
     expect(getOptimizeReport).toHaveBeenCalledWith('30days', 'claude', { from: '2026-07-01', to: '2026-07-11' })
+    expect(getYield).toHaveBeenCalledWith('30days', 'claude', { from: '2026-07-01', to: '2026-07-11' })
   })
 
   it('keeps last-good yield totals and rows visible during revalidation', async () => {

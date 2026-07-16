@@ -7,7 +7,7 @@ import { Sidebar, type Section } from './components/Sidebar'
 import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
-import { formatUsd } from './lib/format'
+import { formatUsd, setActiveCurrency } from './lib/format'
 import { codeburn } from './lib/ipc'
 import { OverviewContent } from './sections/Overview'
 import { OptimizeContent } from './sections/Optimize'
@@ -68,10 +68,11 @@ export function App() {
   const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
   const [period, setPeriod] = useState<Period>('30days')
   const [provider, setProvider] = useState<string>('all')
-  const [detectedProviders, setDetectedProviders] = useState<string[]>([])
+  const [detectedProviders, setDetectedProviders] = useState<Array<{ id: string; label: string }>>([])
   const [customRange, setCustomRange] = useState<DateRange | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const [now, setNow] = useState(() => Date.now())
+  const [, setCurrencyTick] = useState(0)
 
   const overview = usePolled<MenubarPayload>(
     () => customRange
@@ -90,13 +91,25 @@ export function App() {
 
   useEffect(() => {
     if (!overview.data) return
-    const found = Object.entries(overview.data.current.providers).filter(([, value]) => value > 0).map(([key]) => key)
+    const details = overview.data.current.providerDetails
+    // Prefer providerDetails (internal id + display label); fall back to the
+    // providers map keys (lowercased display names) for older CLIs.
+    const found = details
+      ? details.filter(entry => entry.cost > 0).map(entry => ({ id: entry.id, label: entry.label }))
+      : Object.entries(overview.data.current.providers).filter(([, value]) => value > 0).map(([key]) => ({ id: key, label: providerName(key) }))
     setDetectedProviders(current => {
       const next = [...current]
-      for (const item of found) if (!next.includes(item)) next.push(item)
+      for (const item of found) if (!next.some(entry => entry.id === item.id)) next.push(item)
       return next.length === current.length ? current : next
     })
   }, [overview.data])
+
+  useEffect(() => {
+    const currency = overview.data?.currency
+    if (!currency) return
+    setActiveCurrency(currency)
+    setCurrencyTick(tick => tick + 1)
+  }, [overview.data?.currency?.code, overview.data?.currency?.rate, overview.data?.currency?.symbol])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
@@ -143,9 +156,9 @@ export function App() {
 
   const providerOptions = [
     { value: 'all', label: 'All providers' },
-    ...detectedProviders.map(value => ({ value, label: providerName(value) })),
+    ...detectedProviders.map(entry => ({ value: entry.id, label: entry.label })),
   ]
-  const providerLabel = providerName(provider)
+  const providerLabel = detectedProviders.find(entry => entry.id === provider)?.label ?? providerName(provider)
   const scope = `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${providerLabel}`
 
   return (

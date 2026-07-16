@@ -3,7 +3,7 @@ import { Panel } from '../components/Panel'
 import type { Section } from '../components/Sidebar'
 import { StaleBanner } from '../components/StaleBanner'
 import { usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatConverted } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { JsonPlanSummary, Period, PlanId, PlanProvider, QuotaProvider, QuotaWindow, StatusJson } from '../lib/types'
 import type { SettingsPane } from './Settings'
@@ -206,9 +206,9 @@ function PlanPanel({ plan }: { plan: JsonPlanSummary }) {
   const trackClass = hasBudget ? (over ? 'over' : undefined) : 'mut'
   const overage = Math.max(0, plan.spent - plan.budget)
   const right = hasBudget
-    ? `${formatUsd(plan.spent)} · ${fmtPct(plan.percentUsed)}${overage > 0 ? ` · ${formatUsd(overage)} over` : ''}`
-    : `${formatUsd(plan.spent)} this cycle`
-  const detail = hasBudget ? `${formatUsd(plan.budget)} / month · ${plan.provider}` : `${plan.provider} · pay as you go, no plan`
+    ? `${formatConverted(plan.spent)} · ${fmtPct(plan.percentUsed)}${overage > 0 ? ` · ${formatConverted(overage)} over` : ''}`
+    : `${formatConverted(plan.spent)} this cycle`
+  const detail = hasBudget ? `${formatConverted(plan.budget)} / month · ${plan.provider}` : `${plan.provider} · pay as you go, no plan`
 
   return (
     <Panel>
@@ -231,14 +231,14 @@ function PaceLine({ plan }: { plan: JsonPlanSummary }) {
   if (plan.status === 'over' || plan.projectedMonthEnd > plan.budget) {
     return (
       <div className="pace hot">
-        On pace to exceed; projected {formatUsd(plan.projectedMonthEnd)} by {endLabel}
+        On pace to exceed; projected {formatConverted(plan.projectedMonthEnd)} by {endLabel}
       </div>
     )
   }
   if (plan.status === 'near') {
     return (
       <div className="pace hot">
-        {fmtPct(plan.percentUsed)} of budget used; projected {formatUsd(plan.projectedMonthEnd)} by {endLabel}
+        {fmtPct(plan.percentUsed)} of budget used; projected {formatConverted(plan.projectedMonthEnd)} by {endLabel}
       </div>
     )
   }

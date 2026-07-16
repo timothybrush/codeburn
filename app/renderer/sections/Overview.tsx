@@ -468,7 +468,7 @@ export function OverviewContent({
   onNavigate?: (section: 'optimize') => void
 }) {
   const actReport = usePolled<ActReportJson>(() => codeburn.getActReport(), [])
-  const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period), [period])
+  const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period, provider), [period, provider])
   const { data, error } = overview
   const modelIndex = useMemo(() => data ? buildModelIndex(data) : new Map<string, string>(), [data])
 

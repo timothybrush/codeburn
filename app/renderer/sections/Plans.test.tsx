@@ -2,6 +2,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setActiveCurrency } from '../lib/format'
 import type { JsonPlanSummary, QuotaProvider, StatusJson } from '../lib/types'
 import { Plans } from './Plans'
 
@@ -98,6 +99,7 @@ function quotaProviders(): QuotaProvider[] {
 
 describe('Plans', () => {
   beforeEach(() => {
+    setActiveCurrency({ code: 'USD', symbol: '$', rate: 1 })
     getPlans.mockReset()
     getQuota.mockReset()
     getQuota.mockResolvedValue(quotaProviders())
@@ -201,6 +203,19 @@ describe('Plans', () => {
     render(<Plans period="week" />)
 
     expect(await screen.findByText('Locate the codeburn CLI')).toBeInTheDocument()
+  })
+
+  it('does not re-apply the FX rate to CLI-converted plan values (symbol swap only)', async () => {
+    // getPlans values arrive already converted by the CLI (convertCost). With a
+    // EUR rate active, the pane must only swap the symbol — a second ×0.9 here
+    // would render €18.00 / €7.38 instead of the correct €20.00 / €8.20.
+    setActiveCurrency({ code: 'EUR', symbol: '€', rate: 0.9 })
+    getPlans.mockResolvedValue({ ...baseStatus, currency: 'EUR', plans: { cursor: cursorPlan } })
+
+    render(<Plans period="30days" />)
+
+    expect(await screen.findByText('€20.00 / month · cursor')).toBeInTheDocument()
+    expect(screen.getByText('€8.20 · 41%')).toBeInTheDocument()
   })
 
   it('renders permission-denied CLI failures as the amber Full Disk Access state', async () => {

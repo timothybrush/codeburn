@@ -41,8 +41,8 @@ export function OptimizeContent({
     [period, provider, range?.from, range?.to, refreshToken],
   )
   const yieldReport = usePolled<YieldJsonReport>(
-    () => range ? codeburn.getYield(period, range) : codeburn.getYield(period),
-    [period, range?.from, range?.to, refreshToken],
+    () => range ? codeburn.getYield(period, provider, range) : codeburn.getYield(period, provider),
+    [period, provider, range?.from, range?.to, refreshToken],
   )
   const [tab, setTab] = useState<OptimizeTab>('waste')
 

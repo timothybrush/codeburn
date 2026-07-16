@@ -145,6 +145,9 @@ export type MenubarPayload = {
     unpricedModels?: Array<{ model: string; calls: number; tokens: number }>
     localModelSavings: LocalModelSavings
     providers: Record<string, number>
+    // Optional: older CLIs omit it. `id` is the internal provider name (round-trips
+    // as --provider), `label` the display name. Fall back to `providers` when absent.
+    providerDetails?: Array<{ id: string; label: string; cost: number }>
     topProjects: Array<{
       name: string
       cost: number
@@ -214,6 +217,9 @@ export type MenubarPayload = {
   history: {
     daily: DailyHistoryEntry[]
   }
+  // Active display currency. Payload costs are raw USD; the renderer multiplies by
+  // `rate` and prefixes `symbol` at display time. Optional: older CLIs omit it.
+  currency?: { code: string; symbol: string; rate: number }
   combined?: CombinedUsage
   claudeConfigs?: ClaudeConfigSelector
 }
@@ -492,7 +498,7 @@ export interface CodeburnBridge {
   getSessions(period: Period, provider: string, range?: DateRange): Promise<SessionRow[]>
   getCompareModels(period: Period, provider: string): Promise<ModelStats[]>
   getCompare(period: Period, provider: string, modelA: string, modelB: string): Promise<CompareJsonReport>
-  getYield(period: Period, range?: DateRange): Promise<YieldJsonReport>
+  getYield(period: Period, provider: string, range?: DateRange): Promise<YieldJsonReport>
   getSpendFlow(period: Period, provider: string, range?: DateRange): Promise<SpendFlow>
   getOptimizeReport(period: Period, provider: string, range?: DateRange): Promise<OptimizeJsonReport>
   getDevices(period: Period): Promise<CombinedUsage>

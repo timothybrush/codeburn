@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Polled } from '../hooks/usePolled'
+import { setActiveCurrency } from '../lib/format'
 import type { ActReportJson, MenubarPayload, YieldJsonReport } from '../lib/types'
 import { Overview, OverviewContent, localDateKey } from './Overview'
 
@@ -16,7 +17,7 @@ function polled(data: MenubarPayload): Polled<MenubarPayload> {
 const { getOverview, getActReport, getYield } = vi.hoisted(() => ({
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
   getActReport: vi.fn<() => Promise<ActReportJson>>(),
-  getYield: vi.fn<(period: string) => Promise<YieldJsonReport>>(),
+  getYield: vi.fn<(period: string, provider: string) => Promise<YieldJsonReport>>(),
 }))
 vi.mock('../lib/ipc', async orig => {
   const actual = await orig<typeof import('../lib/ipc')>()
@@ -148,6 +149,7 @@ function makePayload(now: Date): MenubarPayload {
 
 describe('Overview', () => {
   beforeEach(() => {
+    setActiveCurrency({ code: 'USD', symbol: '$', rate: 1 })
     getOverview.mockReset()
     getActReport.mockReset()
     getYield.mockReset()
@@ -480,5 +482,19 @@ describe('Overview', () => {
     render(<OverviewContent period="30days" provider="all" overview={overview} />)
 
     expect(await screen.findByRole('status')).toHaveTextContent('Refresh failed, showing last good data · codeburn exited 1')
+  })
+
+  it('renders section costs in the active non-USD currency (rate applied once, symbol swapped)', async () => {
+    setActiveCurrency({ code: 'EUR', symbol: '€', rate: 0.9 })
+    const now = new Date()
+    getOverview.mockResolvedValue(makePayload(now))
+
+    render(<Overview period="30days" provider="all" />)
+
+    // Cost per outcome sources raw-USD yield values: $/commit = 150/6 = 25 → €22.50,
+    // $/productive session = 120/3 = 40 → €36.00 (rate applied exactly once).
+    const outcome = (await screen.findByText('Cost per outcome')).closest('.ov-panel') as HTMLElement
+    expect(within(outcome).getByText('€22.50')).toBeInTheDocument()
+    expect(within(outcome).getByText('€36.00')).toBeInTheDocument()
   })
 })

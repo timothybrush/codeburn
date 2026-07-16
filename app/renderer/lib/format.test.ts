@@ -1,6 +1,29 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { formatCompact, formatDayLong, formatDayShort, formatDuration } from './format'
+import { formatCompact, formatConverted, formatDayLong, formatDayShort, formatDuration, formatUsd, setActiveCurrency } from './format'
+
+describe('currency-aware formatting', () => {
+  afterEach(() => setActiveCurrency({ code: 'USD', symbol: '$', rate: 1 }))
+
+  it('formats raw USD with the default USD currency', () => {
+    expect(formatUsd(12.34)).toBe('$12.34')
+    expect(formatUsd(1_234.5)).toBe('$1,234.50')
+  })
+
+  it('applies the active FX rate and symbol to raw-USD values exactly once', () => {
+    setActiveCurrency({ code: 'EUR', symbol: '€', rate: 0.9 })
+    // 100 USD × 0.9 = 90.00 EUR
+    expect(formatUsd(100)).toBe('€90.00')
+    expect(formatUsd(1_000)).toBe('€900.00')
+  })
+
+  it('formatConverted swaps the symbol without re-applying the rate (CLI-converted values)', () => {
+    setActiveCurrency({ code: 'EUR', symbol: '€', rate: 0.9 })
+    // Already-EUR input renders as-is, never multiplied by the rate again.
+    expect(formatConverted(90)).toBe('€90.00')
+    expect(formatConverted(20)).toBe('€20.00')
+  })
+})
 
 describe('formatCompact', () => {
   it('formats zero, plain counts, thousands, and millions compactly', () => {

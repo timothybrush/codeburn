@@ -7,7 +7,7 @@ import { Panel } from '../components/Panel'
 import { ProviderLogo } from '../components/ProviderLogo'
 import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatConverted, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { ActionResult, AliasRow, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
 
@@ -203,7 +203,7 @@ function PlansPane({ period, refreshToken, onNavigate }: { period: Period; refre
     <div><h3 className="set-h">Plans</h3><p className="set-sub">Set a monthly budget plan per provider. codeburn compares it to your API-equivalent spend.</p></div>
     <div className="card">
       <div className="about-sec">
-        {plans.error ? <SettingsErrorText error={plans.error} /> : !plans.data ? <p className="set-cap">Loading plans…</p> : configured.length === 0 ? <p className="set-cap">No plans configured.</p> : configured.map(plan => <div className="about-row" key={plan.provider}><span className="tx">{PLAN_PRESETS.find(item => item.id === plan.id)?.label ?? plan.id}<small>${plan.budget}/month · {plan.provider} · {plan.percentUsed}% used</small></span><span className="r"><button className="btnp" onClick={() => remove(plan)}>Remove</button></span></div>)}
+        {plans.error ? <SettingsErrorText error={plans.error} /> : !plans.data ? <p className="set-cap">Loading plans…</p> : configured.length === 0 ? <p className="set-cap">No plans configured.</p> : configured.map(plan => <div className="about-row" key={plan.provider}><span className="tx">{PLAN_PRESETS.find(item => item.id === plan.id)?.label ?? plan.id}<small>{formatConverted(plan.budget)}/month · {plan.provider} · {plan.percentUsed}% used</small></span><span className="r"><button className="btnp" onClick={() => remove(plan)}>Remove</button></span></div>)}
       </div>
       <div className="about-sec set-last-sec">
         <div className="about-row"><label className="tx" htmlFor="settings-plan-preset">Add a plan</label><span className="r"><Dropdown id="settings-plan-preset" ariaLabel="Add a plan" value={presetId} options={PLAN_PRESETS.map(preset => ({ value: preset.id, label: preset.label }))} onChange={value => setPresetId(value as PlanPreset['id'])} width={160} /><button className="btnp btnp-primary" onClick={add}>Add</button></span></div>

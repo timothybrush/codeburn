@@ -131,7 +131,7 @@ describe('Settings', () => {
     render(<Settings period="month" />)
     await user.click(screen.getByRole('button', { name: 'Plans' }))
     expect((await screen.findAllByText('Claude Max 20x')).length).toBeGreaterThan(0)
-    expect(screen.getByText('$200/month · claude · 24% used')).toBeInTheDocument()
+    expect(screen.getByText('$200.00/month · claude · 24% used')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Remove' }))
     expect(mocks.resetPlan).toHaveBeenCalledWith('claude')
     await user.click(screen.getByLabelText('Add a plan'))

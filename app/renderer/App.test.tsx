@@ -218,6 +218,26 @@ describe('App shortcuts', () => {
     })
   })
 
+  it('builds the provider picker from providerDetails so display-name providers round-trip their internal id', async () => {
+    // grok's display name is "Grok Build"; the picker must show the label but
+    // send the internal id `grok` as --provider (which assertProvider accepts).
+    const payload = overviewPayload()
+    payload.current.providers = { 'grok build': 5, claude: 10 }
+    payload.current.providerDetails = [
+      { id: 'grok', label: 'Grok Build', cost: 5 },
+      { id: 'claude', label: 'Claude', cost: 10 },
+    ]
+    mocks.getOverview.mockResolvedValue(payload)
+
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('All providers'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Grok Build' }))
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'grok'))
+  })
+
   it('applies a calendar range to overview and visible section polls', async () => {
     render(<App />)
 
