@@ -1,0 +1,351 @@
+import { useCallback, useEffect, useState } from 'react'
+
+import { EmptyNote } from './components/EmptyState'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { Hint } from './components/Hint'
+import { Panel } from './components/Panel'
+import { Sidebar, type Section } from './components/Sidebar'
+import { Splash } from './components/Splash'
+import { ToastHost } from './components/ToastHost'
+import { rangeLabel, TopBar } from './components/TopBar'
+import { Window } from './components/Window'
+import { usePolled } from './hooks/usePolled'
+import { readDailyBudget } from './lib/budget'
+import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
+import { motionClass } from './lib/motion'
+import { codeburn } from './lib/ipc'
+import { localDateKey } from './lib/period'
+import { OverviewContent } from './sections/Overview'
+import { OptimizeContent } from './sections/Optimize'
+import { Models } from './sections/Models'
+import { Sessions } from './sections/Sessions'
+import { Compare } from './sections/Compare'
+import { Plans } from './sections/Plans'
+import { Settings, type SettingsPane } from './sections/Settings'
+import { SpendContent } from './sections/Spend'
+import type { DateRange, MenubarPayload, Period } from './lib/types'
+
+const SECTION_TITLES: Record<Section, string> = {
+  overview: 'Overview',
+  sessions: 'Sessions',
+  spend: 'Spend',
+  optimize: 'Optimize',
+  models: 'Models',
+  compare: 'Compare',
+  plans: 'Plans',
+  settings: 'Settings',
+}
+
+const PERIOD_LABELS: Record<Period, string> = {
+  today: 'Today',
+  week: 'Last 7 days',
+  month: 'This month',
+  '30days': 'Last 30 days',
+  all: 'All time',
+}
+
+const STANDARD_PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
+
+function isPeriod(value: string): value is Period {
+  return (STANDARD_PERIODS as string[]).includes(value)
+}
+
+/** Boot period = the persisted "Default period" Settings writes, else 30 days. */
+function initialPeriod(): Period {
+  let saved: string | null = null
+  try { saved = globalThis.localStorage?.getItem('codeburn.defaultPeriod') ?? null } catch { /* storage can be unavailable */ }
+  return saved && isPeriod(saved) ? saved : '30days'
+}
+
+/** Persisted Claude config override (empty/absent = aggregate all configs). */
+function initialConfigSource(): string | null {
+  try { return globalThis.localStorage?.getItem('codeburn.claudeConfigSource') || null } catch { return null }
+}
+
+function persistConfigSource(id: string | null): void {
+  try {
+    if (id) globalThis.localStorage?.setItem('codeburn.claudeConfigSource', id)
+    else globalThis.localStorage?.removeItem('codeburn.claudeConfigSource')
+  } catch { /* storage can be unavailable */ }
+}
+
+function providerName(provider: string): string {
+  if (provider === 'all') return 'All providers'
+  return provider
+    .split(/[-\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function refreshedLabel(lastSuccessAt: number | null, loading: boolean, now: number): string {
+  if (loading && lastSuccessAt === null) return 'refreshing…'
+  if (lastSuccessAt === null) return 'not refreshed yet'
+  const seconds = Math.max(0, Math.floor((now - lastSuccessAt) / 1000))
+  if (seconds < 1) return 'refreshed just now'
+  if (seconds < 60) return `refreshed ${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  return `refreshed ${minutes}m ago`
+}
+
+export function App() {
+  const [section, setSection] = useState<Section>('overview')
+  const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
+  const [period, setPeriod] = useState<Period>(initialPeriod)
+  const [provider, setProvider] = useState<string>('all')
+  const [detectedProviders, setDetectedProviders] = useState<Array<{ id: string; label: string }>>([])
+  const [customRange, setCustomRange] = useState<DateRange | null>(null)
+  const [claudeConfigSource, setClaudeConfigSource] = useState<string | null>(initialConfigSource)
+  const [refreshToken, setRefreshToken] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
+  const [, setCurrencyTick] = useState(0)
+
+  // Preserve the 2/3-arg call shapes when no config is scoped so the CLI argv
+  // stays flag-free; only add --claude-config-source once a config is picked.
+  const overview = usePolled<MenubarPayload>(
+    () => claudeConfigSource
+      ? codeburn.getOverview(period, provider, customRange ?? undefined, claudeConfigSource)
+      : customRange
+      ? codeburn.getOverview(period, provider, customRange)
+      : codeburn.getOverview(period, provider),
+    [period, provider, customRange?.from, customRange?.to, claudeConfigSource],
+  )
+  const refreshOverview = overview.refresh
+
+  useEffect(() => {
+    let saved: string | null = null
+    try { saved = globalThis.localStorage?.getItem('codeburn.theme') ?? null } catch { /* storage can be unavailable */ }
+    if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved)
+    else document.documentElement.removeAttribute('data-theme')
+  }, [])
+
+  useEffect(() => {
+    if (!overview.data) return
+    const details = overview.data.current.providerDetails
+    // Prefer providerDetails (internal id + display label); fall back to the
+    // providers map keys (lowercased display names) for older CLIs.
+    const found = details
+      ? details.filter(entry => entry.cost > 0).map(entry => ({ id: entry.id, label: entry.label }))
+      : Object.entries(overview.data.current.providers)
+          // Fallback map keys are lowercased display names; ones with spaces
+          // ("grok build") cannot round-trip as --provider, so exclude them
+          // rather than offer a filter that is guaranteed to error.
+          .filter(([key, value]) => value > 0 && /^[a-z0-9-]+$/.test(key))
+          .map(([key]) => ({ id: key, label: providerName(key) }))
+    setDetectedProviders(current => {
+      const next = [...current]
+      for (const item of found) if (!next.some(entry => entry.id === item.id)) next.push(item)
+      return next.length === current.length ? current : next
+    })
+  }, [overview.data])
+
+  useEffect(() => {
+    const currency = overview.data?.currency
+    if (!currency) return
+    setActiveCurrency(currency)
+    setCurrencyTick(tick => tick + 1)
+  }, [overview.data?.currency?.code, overview.data?.currency?.rate, overview.data?.currency?.symbol])
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const refreshVisible = useCallback(() => {
+    refreshOverview()
+    setRefreshToken(token => token + 1)
+  }, [refreshOverview])
+
+  const navigate = useCallback((next: Section, pane: SettingsPane = 'general') => {
+    setSettingsPane(pane)
+    setSection(next)
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
+      const key = event.key.toLowerCase()
+      if (key === '1') navigate('overview')
+      else if (key === '2') navigate('sessions')
+      else if (key === '3') navigate('spend')
+      else if (key === '4') navigate('optimize')
+      else if (key === '5') navigate('models')
+      else if (key === '6') navigate('compare')
+      else if (key === '7') navigate('plans')
+      else if (key === ',') navigate('settings')
+      else if (key === 'r') refreshVisible()
+      else return
+      event.preventDefault()
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [refreshVisible, navigate])
+
+  const onPeriodChange = (value: string) => {
+    if (isPeriod(value)) {
+      setCustomRange(null)
+      setPeriod(value)
+    }
+  }
+
+  // A Claude config scopes Claude usage only, so a non-Claude provider filter
+  // would make the CLI reject the flag: reset it to 'all' first (a 'claude'
+  // filter is already compatible and is left alone).
+  const onConfigSelect = (id: string) => {
+    const next = id || null
+    if (next && provider !== 'all' && provider !== 'claude') setProvider('all')
+    setClaudeConfigSource(next)
+    persistConfigSource(next)
+  }
+
+  // Symmetric direction: picking a non-Claude provider while a config is
+  // scoped would hit the same CLI rejection, so drop the config scope.
+  const onProviderSelect = (value: string) => {
+    if (claudeConfigSource && value !== 'all' && value !== 'claude') {
+      setClaudeConfigSource(null)
+      persistConfigSource(null)
+    }
+    setProvider(value)
+  }
+
+  const claudeConfigs = overview.data?.claudeConfigs
+  const providerOptions = [
+    { value: 'all', label: 'All providers' },
+    ...detectedProviders.map(entry => ({ value: entry.id, label: entry.label })),
+  ]
+  const providerLabel = detectedProviders.find(entry => entry.id === provider)?.label ?? providerName(provider)
+  const activeConfigLabel = claudeConfigSource
+    ? claudeConfigs?.options.find(option => option.id === claudeConfigSource)?.label ?? null
+    : null
+  const scope = `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${providerLabel}${activeConfigLabel ? ` · ${activeConfigLabel}` : ''}`
+
+  return (
+    <Window>
+      <Sidebar active={section} onNavigate={navigate} status={<StatusLine polled={overview} />} />
+      <ToastHost />
+      <Splash hasData={overview.data != null} hasError={overview.error != null} />
+      <div className="ct">
+        <DailyBudgetBanner payload={overview.data ?? null} provider={provider} />
+        <ErrorBoundary key={section}>
+        {section === 'plans' ? (
+          <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} />
+        ) : section === 'settings' ? (
+          <Settings period={period} refreshToken={refreshToken} onNavigate={navigate} initialPane={settingsPane} claudeConfigs={claudeConfigs} claudeConfigSource={claudeConfigSource} />
+        ) : (
+          <>
+            <TopBar
+              title={SECTION_TITLES[section]}
+              scope={scope}
+              period={period}
+              onPeriodChange={onPeriodChange}
+              customRange={customRange}
+              onRangeSelect={setCustomRange}
+              provider={provider}
+              providerLabel={providerLabel}
+              providerOptions={providerOptions}
+              onProviderSelect={onProviderSelect}
+              claudeConfigs={claudeConfigs}
+              configSource={claudeConfigSource}
+              onConfigSelect={onConfigSelect}
+            />
+            <div className={motionClass('body', 'section-fade')}>
+              {section === 'overview' ? (
+                <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} />
+              ) : section === 'sessions' ? (
+                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={detectedProviders} onProviderChange={onProviderSelect} />
+              ) : section === 'spend' ? (
+                <SpendContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
+              ) : section === 'optimize' ? (
+                <OptimizeContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
+              ) : section === 'models' ? (
+                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} />
+              ) : section === 'compare' ? (
+                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
+              ) : (
+                <SectionPlaceholder title={SECTION_TITLES[section]} />
+              )}
+            </div>
+          </>
+        )}
+        </ErrorBoundary>
+        {section !== 'settings' && (
+          <Hint
+            items={[
+              { k: '⌘1-7', label: 'Navigate' },
+              { k: '⌘,', label: 'Settings' },
+              { k: '⌘R', label: 'Refresh' },
+            ]}
+            right={refreshedLabel(overview.lastSuccessAt, overview.loading, now)}
+          />
+        )}
+      </div>
+    </Window>
+  )
+}
+
+function StatusLine({ polled }: { polled: ReturnType<typeof usePolled<MenubarPayload>> }) {
+  if (polled.data) {
+    return (
+      <>
+        {polled.data.current.label} <b>{formatUsd(polled.data.current.cost)}</b>
+      </>
+    )
+  }
+  if (polled.error?.kind === 'not-found') return <>CLI not found</>
+  if (polled.loading) return <>scanning…</>
+  return <>—</>
+}
+
+function SectionPlaceholder({ title }: { title: string }) {
+  return (
+    <Panel title={title}>
+      <EmptyNote>{title} lands in a later task. The shell, data bridge, and design system are in place.</EmptyNote>
+    </Panel>
+  )
+}
+
+/** App-wide daily-budget alert: reads today's usage from the overview payload and
+ * warns at >=80% / alerts at >=100% of the configured cap. Dismissible per day. */
+function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | null; provider: string }) {
+  const [, bumpDismiss] = useState(0)
+  const budget = readDailyBudget()
+  if (!budget || !payload) return null
+
+  // Token totals in history.daily are zeroed under a specific-provider filter
+  // (only cost is per-provider), so a token cap can only be evaluated honestly on
+  // the all-providers view; otherwise we'd compare usage against a false zero.
+  if (budget.kind === 'tokens' && provider !== 'all') return null
+
+  const todayKey = localDateKey(new Date())
+  let dismissed: string | null = null
+  try { dismissed = globalThis.localStorage?.getItem('codeburn.dailyBudget.dismissed') ?? null } catch { /* storage can be unavailable */ }
+  if (dismissed === todayKey) return null
+
+  // Today's entry may be absent when there has been no activity yet: that's 0 used.
+  const entry = payload.history.daily.find(day => day.date === todayKey)
+  const used = budget.kind === 'usd'
+    ? entry?.cost ?? 0
+    : entry ? entry.inputTokens + entry.outputTokens : 0
+  const percent = (used / budget.value) * 100
+  if (percent < 80) return null
+
+  const exceeded = percent >= 100
+  const spent = budget.kind === 'usd' ? formatUsd(used) : formatCompact(used)
+  const cap = budget.kind === 'usd' ? formatUsd(budget.value) : formatCompact(budget.value)
+  const text = exceeded
+    ? `Daily budget exceeded: ${spent} of ${cap}`
+    : `Today's spend is at ${Math.floor(percent)}% of your daily budget`
+
+  const dismiss = () => {
+    try { globalThis.localStorage?.setItem('codeburn.dailyBudget.dismissed', todayKey) } catch { /* storage can be unavailable */ }
+    bumpDismiss(tick => tick + 1)
+  }
+
+  return (
+    <div role="status" className={exceeded ? 'budget-banner exceeded' : 'budget-banner'}>
+      <span>{text}</span>
+      <button type="button" className="set-text-button" onClick={dismiss}>Dismiss</button>
+    </div>
+  )
+}

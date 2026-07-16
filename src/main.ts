@@ -4,7 +4,7 @@ import { installMenubarApp } from './menubar-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
 import { findUnpricedModels, loadPricing, setModelAliases, setPriceOverrides, setLocalModelSavings, setProxyPaths, normalizeProxyPath } from './models.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDateRange, clearSessionCache } from './parser.js'
-import { allProviderNames } from './providers/index.js'
+import { allProviderNames, getAllProviders } from './providers/index.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { toDateString } from './daily-cache.js'
@@ -20,7 +20,10 @@ import { runShareServer } from './sharing/share-run.js'
 import { addRemote, linkRemote, pullDevices, renderDevices, summarizeDeviceUsage } from './sharing/host.js'
 import { browse } from './sharing/discovery.js'
 import { promptChoice } from './sharing/prompt.js'
-import { loadRemotes, saveRemotes } from './sharing/store.js'
+import { loadOrCreateIdentity } from './sharing/identity.js'
+import { pairingCode } from './sharing/pairing.js'
+import { ShareController } from './sharing/share-controller.js'
+import { getSharingDir, loadRemotes, saveRemotes } from './sharing/store.js'
 import type { UsageQuery } from './sharing/share-server.js'
 import { formatDateRangeLabel, parseDateRangeFlags, parseDayFlag, parseDaysFlag, getDateRange, toPeriod, type Period } from './cli-date.js'
 import { runOptimize } from './optimize.js'
@@ -73,6 +76,27 @@ type PriceOverrideOptions = {
   cacheCreation?: number
   remove?: string
   list?: boolean
+  format?: string
+}
+
+type PriceOverrideRow = {
+  model: string
+  inputPerM: number
+  outputPerM: number
+  cacheReadPerM?: number
+  cacheCreationPerM?: number
+}
+
+function toPriceOverrideRows(overrides: Map<string, PriceOverrideConfig>): PriceOverrideRow[] {
+  return [...overrides.entries()]
+    .map(([model, rates]) => ({
+      model,
+      inputPerM: rates.input,
+      outputPerM: rates.output,
+      ...(typeof rates.cacheRead === 'number' ? { cacheReadPerM: rates.cacheRead } : {}),
+      ...(typeof rates.cacheCreation === 'number' ? { cacheCreationPerM: rates.cacheCreation } : {}),
+    }))
+    .sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0)
 }
 
 function invalidUsdPerMillionRate(option: string, value: number | undefined): string | null {
@@ -166,6 +190,14 @@ function assertFormat(value: string, allowed: readonly string[], command: string
     )
     process.exit(1)
   }
+}
+
+type AliasRow = { from: string; to: string }
+
+function toAliasRows(aliases: Record<string, string>): AliasRow[] {
+  return Object.entries(aliases)
+    .map(([from, to]) => ({ from, to }))
+    .sort((a, b) => a.from < b.from ? -1 : a.from > b.from ? 1 : 0)
 }
 
 function assertProvider(value: string, command: string): void {
@@ -534,23 +566,78 @@ program
   })
 
 program
-  .command('share')
-  .description("Securely share this device's usage with your other devices on the same network")
+  .command('share [action]')
+  .description("Securely share this device's usage with your other devices. Actions: status. Supports --format json for status.")
   .option('--port <number>', 'Port to listen on', parseInteger, 7777)
   .option('--pair', 'Open a pairing window and print a PIN to add a new device')
   .option('--always', 'Keep sharing until stopped (default stops after 10 min idle)')
-  .action(async (opts) => {
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (action: string | undefined, opts) => {
+    assertFormat(opts.format, ['text', 'json'], 'share')
+    if (action === 'status') {
+      const share = new ShareController(async () => ({}), opts.port)
+      const status = await share.status()
+      if (opts.format === 'json') {
+        console.log(JSON.stringify(status))
+        return
+      }
+      console.log(`\n  Sharing: ${status.sharing ? 'on' : 'off'}\n  Name: ${status.name}\n  Port: ${status.port}\n  Paired peers: ${status.peers}\n`)
+      return
+    }
+    if (action !== undefined) {
+      process.stderr.write('codeburn share: unknown action. Valid values: status.\n')
+      process.exit(1)
+    }
+    if (opts.format === 'json') {
+      process.stderr.write('codeburn share: --format json is only supported for `share status`.\n')
+      process.exit(1)
+    }
     await runShareServer({ port: opts.port, pair: !!opts.pair, always: !!opts.always })
   })
 
 program
   .command('devices [action] [target]')
-  .description('Combined usage across your devices. Actions: add (find nearby & pair) | add <host> --pin <pin> (manual) | rm <name>')
+  .description('Combined usage across your devices. Actions: scan | add (find nearby & pair) | add <host> --pin <pin> (manual) | rm <name>. Supports --format json for read-only output and scan.')
   .option('--pin <pin>', 'Pairing PIN shown on the device you are adding')
   .option('-p, --period <period>', 'Period: today, week, 30days, month, all', 'month')
   .option('--port <number>', 'Default port when adding a device', parseInteger, 7777)
+  .option('--format <format>', 'Output format: text, json', 'text')
   .action(async (action: string | undefined, target: string | undefined, opts) => {
+    assertFormat(opts.format, ['text', 'json'], 'devices')
     await loadPricing()
+    if (action === 'scan') {
+      const dir = getSharingDir()
+      const id = await loadOrCreateIdentity(dir)
+      const pairedFps = new Set((await loadRemotes(dir)).map((r) => r.fingerprint))
+      const found = (await browse(2500))
+        .filter((d) => d.fingerprint !== id.fingerprint)
+        .map((d) => ({
+          name: d.name,
+          host: d.host,
+          port: d.port,
+          fingerprint: d.fingerprint,
+          code: pairingCode(id.fingerprint, d.fingerprint),
+          paired: pairedFps.has(d.fingerprint),
+        }))
+      if (opts.format === 'json') {
+        console.log(JSON.stringify({ found }))
+        return
+      }
+      if (found.length === 0) {
+        console.log('\n  No devices found. On the other Mac run `codeburn share`, and make sure both are on the same Wi-Fi.\n')
+        return
+      }
+      process.stdout.write('\n  Found devices:\n')
+      for (const d of found) {
+        process.stdout.write(`    ${d.name} (${d.host}:${d.port}) ${d.paired ? '[paired]' : `[code ${d.code}]`}\n`)
+      }
+      process.stdout.write('\n')
+      return
+    }
+    if (opts.format === 'json' && action !== undefined) {
+      process.stderr.write('codeburn devices: --format json is only supported for read-only devices output and scan.\n')
+      process.exit(1)
+    }
     if (action === 'add') {
       if (target && opts.pin) {
         const device = await addRemote(target, opts.pin, { defaultPort: opts.port })
@@ -595,7 +682,26 @@ program
       return buildMenubarPayloadForRange(periodInfo, { provider: 'all', optimize: false })
     }
     const results = await pullDevices(localGetUsage, { period: opts.period }, hostname(), {})
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(summarizeDeviceUsage(results)))
+      return
+    }
     process.stdout.write('\n' + renderDevices(results))
+  })
+
+program
+  .command('identity')
+  .description('Show this device identity for sharing')
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (opts) => {
+    assertFormat(opts.format, ['text', 'json'], 'identity')
+    const id = await loadOrCreateIdentity(getSharingDir())
+    const publicIdentity = { name: id.name, fingerprint: id.fingerprint }
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(publicIdentity))
+      return
+    }
+    console.log(`\n  Name: ${publicIdentity.name}\n  Fingerprint: ${publicIdentity.fingerprint}\n`)
   })
 
 program
@@ -954,11 +1060,18 @@ program
   .description('Map a provider model name to a canonical one for pricing (e.g. codeburn model-alias my-model claude-opus-4-6)')
   .option('--remove <from>', 'Remove an alias')
   .option('--list', 'List configured aliases')
-  .action(async (from?: string, to?: string, opts?: { remove?: string; list?: boolean }) => {
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (from?: string, to?: string, opts?: { remove?: string; list?: boolean; format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'model-alias')
     const config = await readConfig()
     const aliases = config.modelAliases ?? {}
 
     if (opts?.list || (!from && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify(toAliasRows(aliases), null, 2))
+        return
+      }
       const entries = Object.entries(aliases)
       if (entries.length === 0) {
         console.log('\n  No model aliases configured.')
@@ -1008,11 +1121,18 @@ program
   .option('--cache-creation <usd-per-1M>', 'Cache-creation token price in USD per 1,000,000 tokens', parseNumber)
   .option('--remove <model>', 'Remove a price override')
   .option('--list', 'List configured price overrides')
+  .option('--format <format>', 'Output format: text, json', 'text')
   .action(async (model?: string, opts?: PriceOverrideOptions) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'price-override')
     const config = await readConfig()
     const overrides = new Map<string, PriceOverrideConfig>(Object.entries(config.priceOverrides ?? {}))
 
     if (opts?.list || (!model && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify({ overrides: toPriceOverrideRows(overrides), configPath: getConfigFilePath() }, null, 2))
+        return
+      }
       const entries = [...overrides.entries()]
       if (entries.length === 0) {
         console.log('\n  No price overrides configured.')
@@ -1142,7 +1262,10 @@ program
   .description('Mark a project directory as routed through a subscription-backed LLM proxy (e.g. Claude Code over GitHub Copilot). Sessions whose canonical path is under it keep their full API-rate cost as the "would-be" figure, but that amount is reported as subscription-covered so the report can show net out-of-pocket (e.g. codeburn proxy-path ~/work/copilot-repo). Actual API-key sessions elsewhere are untouched.')
   .option('--remove <path>', 'Remove a configured proxy path')
   .option('--list', 'List configured proxy paths')
-  .action(async (path?: string, opts?: { remove?: string; list?: boolean }) => {
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (path?: string, opts?: { remove?: string; list?: boolean; format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'proxy-path')
     const config = await readConfig()
     // Sanitize the on-disk shape the same way setProxyPaths does: a hand-edited
     // config.json could have proxyPaths as a non-array or hold non-string
@@ -1152,6 +1275,10 @@ program
     const samePath = (a: string, b: string) => normalizeProxyPath(a) === normalizeProxyPath(b)
 
     if (opts?.list || (!path && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify(paths, null, 2))
+        return
+      }
       if (paths.length === 0) {
         console.log('\n  No proxy paths configured.')
         console.log(`  Config: ${getConfigFilePath()}`)
@@ -1351,6 +1478,8 @@ program
   .command('optimize')
   .description('Find token waste and get exact fixes')
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
+  .option('--from <date>', 'Custom range start (YYYY-MM-DD)')
+  .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: text, json', 'text')
   .option('--json', 'Output findings as JSON (alias for --format json)')
@@ -1366,7 +1495,20 @@ program
       process.exit(2)
     }
     await loadPricing()
-    const { range, label } = getDateRange(opts.period)
+    let range: DateRange
+    let label: string
+    if (opts.from || opts.to) {
+      try {
+        range = parseDateRangeFlags(opts.from, opts.to)!
+        label = formatDateRangeLabel(opts.from, opts.to)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`\n  Error: ${message}\n`)
+        process.exit(1)
+      }
+    } else {
+      ({ range, label } = getDateRange(opts.period))
+    }
     const projects = await parseAllSessions(range, opts.provider)
     if (opts.apply) {
       const { runOptimizeApply } = await import('./act/optimize-apply.js')
@@ -1420,10 +1562,51 @@ program
   .description('Compare two AI models side-by-side')
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', 'all')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
+  .option('--format <format>', 'Output format: tui, json', 'tui')
+  .option('--model-a <model>', 'First model to compare')
+  .option('--model-b <model>', 'Second model to compare')
   .action(async (opts) => {
     assertProvider(opts.provider, 'compare')
+    assertFormat(opts.format, ['tui', 'json'], 'compare')
     await loadPricing()
-    const { range } = getDateRange(opts.period)
+    const { range, label } = getDateRange(opts.period)
+    if (opts.format === 'json') {
+      const { aggregateModelStats, buildCompareJson, renderCompareJson, scanSelfCorrections } = await import('./compare-stats.js')
+      const projects = await parseAllSessions(range, opts.provider)
+      const models = aggregateModelStats(projects)
+
+      const providers = await getAllProviders()
+      const dirs: string[] = []
+      for (const provider of providers) {
+        const sessions = await provider.discoverSessions()
+        for (const session of sessions) dirs.push(session.path)
+      }
+      const corrections = await scanSelfCorrections(dirs)
+      for (const model of models) {
+        model.selfCorrections = corrections.get(model.model) ?? 0
+      }
+
+      if (!opts.modelA && !opts.modelB) {
+        process.stdout.write(JSON.stringify(models, null, 2) + '\n')
+        return
+      }
+      if (!opts.modelA || !opts.modelB) {
+        process.stderr.write('codeburn compare: --model-a and --model-b must be provided together.\n')
+        process.exit(1)
+      }
+      const modelA = models.find(model => model.model === opts.modelA)
+      const modelB = models.find(model => model.model === opts.modelB)
+      if (!modelA) {
+        process.stderr.write(`codeburn compare: model not found: "${opts.modelA}".\n`)
+        process.exit(1)
+      }
+      if (!modelB) {
+        process.stderr.write(`codeburn compare: model not found: "${opts.modelB}".\n`)
+        process.exit(1)
+      }
+      process.stdout.write(renderCompareJson(buildCompareJson(projects, modelA, modelB, label, opts.provider)) + '\n')
+      return
+    }
     await renderCompare(range, opts.provider)
   })
 
@@ -1525,24 +1708,87 @@ program
   })
 
 program
+  .command('sessions')
+  .description('Full per-session usage report')
+  .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
+  .option('--from <date>', 'Custom range start (YYYY-MM-DD)')
+  .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
+  .option('--format <format>', 'Output format: table, json', 'table')
+  .action(async (opts) => {
+    assertProvider(opts.provider, 'sessions')
+    assertFormat(opts.format, ['table', 'json'], 'sessions')
+    const { aggregateSessions, renderJson, renderTable } = await import('./sessions-report.js')
+    await loadPricing()
+
+    let range
+    if (opts.from || opts.to) {
+      const customRange = parseDateRangeFlags(opts.from, opts.to)
+      if (!customRange) {
+        process.stderr.write('codeburn: --from and --to must be valid YYYY-MM-DD dates\n')
+        process.exit(1)
+      }
+      range = customRange
+    } else {
+      range = getDateRange(opts.period).range
+    }
+
+    const rows = aggregateSessions(await parseAllSessions(range, opts.provider))
+    const output = opts.format === 'json' ? renderJson(rows) : renderTable(rows)
+    process.stdout.write(output + '\n')
+  })
+
+program
   .command('yield')
   .description('Track which AI spend shipped to main vs reverted/abandoned (experimental)')
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', 'week')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
   .option('--format <format>', 'Output format: text, json', 'text')
   .action(async (opts) => {
     assertFormat(opts.format, ['text', 'json'], 'yield')
+    assertProvider(opts.provider, 'yield')
     const { computeYield, formatYieldSummary, buildYieldJsonReport } = await import('./yield.js')
     await loadPricing()
     const { range, label } = getDateRange(opts.period)
     if (opts.format !== 'json') {
       console.log(`\n  Analyzing yield for ${label}...\n`)
     }
-    const summary = await computeYield(range, process.cwd())
+    const summary = await computeYield(range, process.cwd(), opts.provider)
     if (opts.format === 'json') {
       console.log(JSON.stringify(buildYieldJsonReport(summary, label, range), null, 2))
       return
     }
     console.log(formatYieldSummary(summary))
+  })
+
+program
+  .command('spend')
+  .description('Emit model x project spend flow data')
+  .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
+  .option('--from <date>', 'Custom range start (YYYY-MM-DD)')
+  .option('--to <date>', 'Custom range end (YYYY-MM-DD)')
+  .option('--provider <provider>', 'Filter by provider (e.g. claude, codex, cursor)', 'all')
+  .option('--format <format>', 'Output format: flow-json', 'flow-json')
+  .action(async (opts) => {
+    assertFormat(opts.format, ['flow-json'], 'spend')
+    assertProvider(opts.provider, 'spend')
+    const { computeSpendFlow } = await import('./spend-flow.js')
+    await loadPricing()
+
+    let range: DateRange
+    if (opts.from || opts.to) {
+      try {
+        range = parseDateRangeFlags(opts.from, opts.to)!
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`\n  Error: ${message}\n`)
+        process.exit(1)
+      }
+    } else {
+      range = getDateRange(opts.period).range
+    }
+
+    console.log(JSON.stringify(await computeSpendFlow(range, opts.provider)))
   })
 
 program

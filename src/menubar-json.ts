@@ -31,10 +31,14 @@ export type PeriodData = {
 }
 
 export type ProviderCost = {
+  /// Internal provider id (e.g. `grok`, `cursor-agent`). Round-trips back to the
+  /// CLI as `--provider`, so it must stay the id, not the display name.
   name: string
+  displayName: string
   cost: number
 }
 import type { OptimizeResult } from './optimize.js'
+import { getCurrency } from './currency.js'
 import type { GranularHistory } from './granular-history.js'
 
 const TOP_ACTIVITIES_LIMIT = 20
@@ -167,6 +171,10 @@ export type MenubarPayload = {
     /// `codeburn model-savings`.
     localModelSavings: LocalModelSavings
     providers: Record<string, number>
+    /// Provider identity alongside the `providers` map: `id` is the internal
+    /// provider name (round-trips as `--provider`), `label` the display name.
+    /// The `providers` map keys stay lowercased display names for compatibility.
+    providerDetails: Array<{ id: string; label: string; cost: number }>
     topProjects: Array<{
       name: string
       cost: number
@@ -239,6 +247,10 @@ export type MenubarPayload = {
     /// compatibility with older peers and non-dashboard payload producers.
     timeline?: GranularHistory
   }
+  /// Active display currency. Payload cost values are raw USD; the client
+  /// multiplies by `rate` and prefixes `symbol` at display time. USD =
+  /// { code: 'USD', symbol: '$', rate: 1 }.
+  currency: { code: string; symbol: string; rate: number }
   combined?: CombinedUsage
   claudeConfigs?: ClaudeConfigSelector
 }
@@ -304,9 +316,15 @@ function buildProviders(providers: ProviderCost[]): Record<string, number> {
   const map: Record<string, number> = {}
   for (const p of providers) {
     if (p.cost < 0) continue
-    map[p.name.toLowerCase()] = p.cost
+    map[p.displayName.toLowerCase()] = p.cost
   }
   return map
+}
+
+function buildProviderDetails(providers: ProviderCost[]): MenubarPayload['current']['providerDetails'] {
+  return providers
+    .filter(p => p.cost >= 0)
+    .map(p => ({ id: p.name, label: p.displayName, cost: p.cost }))
 }
 
 function buildHistory(daily: DailyHistoryEntry[] | undefined, timeline?: GranularHistory): MenubarPayload['history'] {
@@ -397,6 +415,7 @@ export function buildMenubarPayload(
       unpricedModels: current.unpricedModels ?? [],
       localModelSavings: breakdowns?.localModelSavings ?? { totalUSD: 0, calls: 0, byModel: [], byProvider: [] },
       providers: buildProviders(providers),
+      providerDetails: buildProviderDetails(providers),
       topProjects: buildTopProjects(current.projects ?? []),
       modelEfficiency: buildModelEfficiency(current.modelEfficiency ?? []),
       topSessions: buildTopSessions(current.topSessions ?? []),
@@ -409,6 +428,10 @@ export function buildMenubarPayload(
     },
     optimize: buildOptimize(optimize),
     history: buildHistory(dailyHistory, granularHistory),
+    currency: (() => {
+      const c = getCurrency()
+      return { code: c.code, symbol: c.symbol, rate: c.rate }
+    })(),
   }
   if (claudeConfigs && claudeConfigs.options.length > 1) {
     payload.claudeConfigs = claudeConfigs

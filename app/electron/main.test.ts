@@ -1,0 +1,270 @@
+// @vitest-environment node
+import { describe, it, expect, vi } from 'vitest'
+
+// Stub electron so importing main.ts does not require an Electron runtime.
+vi.mock('electron', () => ({
+  app: { name: 'CodeBurn', whenReady: () => Promise.resolve(), on: () => {}, quit: () => {} },
+  BrowserWindow: class {},
+  dialog: { showOpenDialog: vi.fn() },
+  ipcMain: { handle: () => {} },
+  Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
+  shell: { openExternal: vi.fn() },
+}))
+
+import { createApplicationMenuTemplate, createBridgeHandlers } from './main'
+import { CliError } from './cli'
+
+function fakeSpawn(result: unknown = { current: { cost: 12.34 } }) {
+  const calls: string[][] = []
+  const spawnCli = vi.fn(async (args: string[]) => {
+    calls.push(args)
+    return result
+  })
+  const spawnCliAction = vi.fn(async (args: string[]) => {
+    calls.push(args)
+    return { ok: true, stdout: 'updated', stderr: '', code: 0 }
+  })
+  return { spawnCli, spawnCliAction, calls }
+}
+
+// Every codeburn:* channel with a representative arg tuple → the exact argv it
+// must spawn. cliStatus is the one channel that resolves without spawning.
+const CHANNELS = [
+  'codeburn:getOverview',
+  'codeburn:getQuota',
+  'codeburn:getPlans',
+  'codeburn:getActReport',
+  'codeburn:getModels',
+  'codeburn:getSessions',
+  'codeburn:getCompareModels',
+  'codeburn:getCompare',
+  'codeburn:getYield',
+  'codeburn:getSpendFlow',
+  'codeburn:getOptimizeReport',
+  'codeburn:getDevices',
+  'codeburn:getDevicesScan',
+  'codeburn:getShareStatus',
+  'codeburn:getIdentity',
+  'codeburn:getAliases',
+  'codeburn:getProxyPaths',
+  'codeburn:getAudit',
+  'codeburn:getPriceOverrides',
+  'codeburn:setCurrency',
+  'codeburn:resetCurrency',
+  'codeburn:addAlias',
+  'codeburn:removeAlias',
+  'codeburn:setPriceOverride',
+  'codeburn:removePriceOverride',
+  'codeburn:removeDevice',
+  'codeburn:setPlan',
+  'codeburn:resetPlan',
+  'codeburn:exportData',
+  'codeburn:cliStatus',
+] as const
+
+const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = [
+  { channel: 'codeburn:getOverview', args: ['30days', 'claude'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--provider', 'claude'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all'], argv: ['status', '--format', 'menubar-json', '--period', '30days'] },
+  { channel: 'codeburn:getPlans', args: ['week'], argv: ['status', '--format', 'json', '--period', 'week'] },
+  { channel: 'codeburn:getActReport', args: [], argv: ['act', 'report', '--json'] },
+  { channel: 'codeburn:getModels', args: ['week', 'claude', true], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task'] },
+  { channel: 'codeburn:getModels', args: ['week', 'all', false], argv: ['models', '--format', 'json', '--period', 'week'] },
+  { channel: 'codeburn:getSessions', args: ['week', 'all'], argv: ['sessions', '--format', 'json', '--period', 'week'] },
+  { channel: 'codeburn:getSessions', args: ['30days', 'claude', { from: '2026-07-01', to: '2026-07-11' }], argv: ['sessions', '--format', 'json', '--period', '30days', '--provider', 'claude', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getCompareModels', args: ['month', 'codex'], argv: ['compare', '--format', 'json', '--period', 'month', '--provider', 'codex'] },
+  { channel: 'codeburn:getCompare', args: ['month', 'all', 'model-a', 'model-b'], argv: ['compare', '--format', 'json', '--period', 'month', '--model-a', 'model-a', '--model-b', 'model-b'] },
+  { channel: 'codeburn:getYield', args: ['today', 'all'], argv: ['yield', '--format', 'json', '--period', 'today'] },
+  { channel: 'codeburn:getYield', args: ['today', 'claude'], argv: ['yield', '--format', 'json', '--period', 'today', '--provider', 'claude'] },
+  { channel: 'codeburn:getSpendFlow', args: ['month', 'openai'], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--provider', 'openai'] },
+  { channel: 'codeburn:getOptimizeReport', args: ['month', 'openai'], argv: ['optimize', '--format', 'json', '--period', 'month', '--provider', 'openai'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'claude-config:91dda17e8cf35193'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--claude-config-source', 'claude-config:91dda17e8cf35193'] },
+  { channel: 'codeburn:getOverview', args: ['month', 'claude', { from: '2026-07-01', to: '2026-07-11' }, 'claude-desktop:980e1e488a654830'], argv: ['status', '--format', 'menubar-json', '--period', 'month', '--provider', 'claude', '--from', '2026-07-01', '--to', '2026-07-11', '--claude-config-source', 'claude-desktop:980e1e488a654830'] },
+  { channel: 'codeburn:getModels', args: ['week', 'claude', true, { from: '2026-07-01', to: '2026-07-11' }], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getYield', args: ['today', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['yield', '--format', 'json', '--period', 'today', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getSpendFlow', args: ['month', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getOptimizeReport', args: ['month', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['optimize', '--format', 'json', '--period', 'month', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getDevices', args: ['week'], argv: ['devices', '--format', 'json', '--period', 'week'] },
+  { channel: 'codeburn:getDevicesScan', args: [], argv: ['devices', 'scan', '--format', 'json'] },
+  { channel: 'codeburn:getShareStatus', args: [], argv: ['share', 'status', '--format', 'json'] },
+  { channel: 'codeburn:getIdentity', args: [], argv: ['identity', '--format', 'json'] },
+  { channel: 'codeburn:getAliases', args: [], argv: ['model-alias', '--list', '--format', 'json'] },
+  { channel: 'codeburn:getProxyPaths', args: [], argv: ['proxy-path', '--list', '--format', 'json'] },
+  { channel: 'codeburn:getAudit', args: ['month', 'claude'], argv: ['audit', '--format', 'json', '--period', 'month', '--provider', 'claude'] },
+  { channel: 'codeburn:getAudit', args: ['30days', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['audit', '--format', 'json', '--period', '30days', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getPriceOverrides', args: [], argv: ['price-override', '--list', '--format', 'json'] },
+  { channel: 'codeburn:setPriceOverride', args: ['unpriced/test-model', { input: 0.27, output: 1.1 }], argv: ['price-override', 'unpriced/test-model', '--input', '0.27', '--output', '1.1'] },
+  { channel: 'codeburn:setPriceOverride', args: ['unpriced/test-model', { input: 0.27, output: 1.1, cacheRead: 0.03, cacheCreation: 0.42 }], argv: ['price-override', 'unpriced/test-model', '--input', '0.27', '--output', '1.1', '--cache-read', '0.03', '--cache-creation', '0.42'] },
+  { channel: 'codeburn:removePriceOverride', args: ['unpriced/test-model'], argv: ['price-override', '--remove', 'unpriced/test-model'] },
+  { channel: 'codeburn:setCurrency', args: ['EUR'], argv: ['currency', 'EUR'] },
+  { channel: 'codeburn:resetCurrency', args: [], argv: ['currency', '--reset'] },
+  { channel: 'codeburn:addAlias', args: ['unknown-model', 'priced-model'], argv: ['model-alias', 'unknown-model', 'priced-model'] },
+  { channel: 'codeburn:removeAlias', args: ['unknown-model'], argv: ['model-alias', '--remove', 'unknown-model'] },
+  { channel: 'codeburn:removeDevice', args: ['studio-mac'], argv: ['devices', 'rm', 'studio-mac'] },
+  { channel: 'codeburn:setPlan', args: ['claude-max', 'claude'], argv: ['plan', 'set', 'claude-max', '--provider', 'claude'] },
+  { channel: 'codeburn:resetPlan', args: ['cursor'], argv: ['plan', 'reset', '--provider', 'cursor'] },
+  { channel: 'codeburn:exportData', args: ['json', 'all', '/tmp/codeburn-export'], argv: ['export', '-f', 'json', '-o', '/tmp/codeburn-export', '--provider', 'all'] },
+]
+
+function flattenMenuItems(items: any[]): any[] {
+  return items.flatMap(item => {
+    const submenu = Array.isArray(item.submenu) ? flattenMenuItems(item.submenu) : []
+    return [item, ...submenu]
+  })
+}
+
+describe('createBridgeHandlers (channel → argv for all channels)', () => {
+  const deps = (extra = {}) => ({ spawnCli: vi.fn(), spawnCliAction: vi.fn(), resolveCodeburnPath: () => null, getQuota: vi.fn(async () => []), ...extra })
+  it('exposes exactly the bridge channels', () => {
+    const handlers = createBridgeHandlers(deps())
+    expect(Object.keys(handlers).sort()).toEqual([...CHANNELS].sort())
+  })
+
+  it.each(ARGV_CASES)('$channel with $args spawns the expected argv', async ({ channel, args, argv }) => {
+    const { spawnCli, spawnCliAction, calls } = fakeSpawn()
+    const handlers = createBridgeHandlers(deps({ spawnCli, spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn' }))
+    const res = await handlers[channel]!(...args)
+    expect(calls[0]).toEqual(argv)
+    expect(res).toMatchObject({ ok: true })
+  })
+
+  it('codeburn:cliStatus resolves from resolveCodeburnPath without spawning', async () => {
+    const spawnCli = vi.fn()
+    const handlers = createBridgeHandlers(deps({ spawnCli, resolveCodeburnPath: () => '/opt/homebrew/bin/codeburn' }))
+    const res = await handlers['codeburn:cliStatus']!()
+    expect(spawnCli).not.toHaveBeenCalled()
+    expect(res).toEqual({ ok: true, value: { found: true, path: '/opt/homebrew/bin/codeburn' } })
+  })
+})
+
+describe('createBridgeHandlers (IPC wiring)', () => {
+  const withQuota = <T extends object>(value: T) => ({ ...value, getQuota: vi.fn(async () => []) })
+  it('returns normalized quota through its own IPC channel and sanitizes unexpected failures', async () => {
+    const base = { spawnCli: vi.fn(), spawnCliAction: vi.fn(), resolveCodeburnPath: () => null }
+    const value = [{ provider: 'claude' as const, connection: 'connected' as const, primary: null, details: [], planLabel: 'Pro', footerLines: [] }]
+    const ok = createBridgeHandlers({ ...base, getQuota: vi.fn(async () => value) })
+    expect(await ok['codeburn:getQuota']!()).toEqual({ ok: true, value })
+
+    const failed = createBridgeHandlers({ ...base, getQuota: vi.fn(async () => { throw new Error('Bearer secret sk-ant-leak') }) })
+    const result = await failed['codeburn:getQuota']!()
+    expect(result).toMatchObject({ ok: false, error: { kind: 'nonzero' } })
+    expect(JSON.stringify(result)).not.toMatch(/secret|sk-ant-leak/)
+  })
+  it('getOverview spawns menubar-json for the period, omitting --provider for "all"', async () => {
+    const { spawnCli, spawnCliAction, calls } = fakeSpawn()
+    const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn' }))
+    const res = await handlers['codeburn:getOverview']!('30days', 'all')
+    expect(calls[0]).toEqual(['status', '--format', 'menubar-json', '--period', '30days'])
+    expect(res).toEqual({ ok: true, value: { current: { cost: 12.34 } } })
+  })
+
+  it('adds --provider and --by-task when requested', async () => {
+    const { spawnCli, spawnCliAction, calls } = fakeSpawn([])
+    const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction, resolveCodeburnPath: () => null }))
+    await handlers['codeburn:getModels']!('week', 'claude', true)
+    expect(calls[0]).toEqual(['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task'])
+  })
+
+  it('returns an error envelope carrying the CliError kind', async () => {
+    const spawnCli = vi.fn(async () => {
+      throw new CliError('nonzero', 'boom')
+    })
+    const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction: vi.fn(), resolveCodeburnPath: () => '/bin/codeburn' }))
+    const res = await handlers['codeburn:getYield']!('today', 'all')
+    expect(res).toEqual({ ok: false, error: { kind: 'nonzero', message: 'boom' } })
+  })
+
+  it('cliStatus reports the resolved binary path', async () => {
+    const handlers = createBridgeHandlers(withQuota({
+      spawnCli: vi.fn(),
+      spawnCliAction: vi.fn(),
+      resolveCodeburnPath: () => '/opt/homebrew/bin/codeburn',
+    }))
+    const res = await handlers['codeburn:cliStatus']!()
+    expect(res).toEqual({ ok: true, value: { found: true, path: '/opt/homebrew/bin/codeburn' } })
+  })
+})
+
+describe('createBridgeHandlers (IPC input validation)', () => {
+  const withQuota = <T extends object>(value: T) => ({ ...value, getQuota: vi.fn(async () => []) })
+  const REJECTIONS: Array<{ name: string; channel: string; args: unknown[] }> = [
+    { name: 'unknown period', channel: 'codeburn:getOverview', args: ['yesterday', 'all'] },
+    { name: 'provider with shell metacharacters', channel: 'codeburn:getOverview', args: ['30days', 'claude; rm -rf'] },
+    { name: 'uppercase provider', channel: 'codeburn:getModels', args: ['week', 'Claude', false] },
+    { name: 'malformed date range', channel: 'codeburn:getYield', args: ['today', 'all', { from: '2026/07/01', to: '2026-07-11' }] },
+    { name: 'lowercase currency code', channel: 'codeburn:setCurrency', args: ['eur'] },
+    { name: 'alias token that looks like a flag', channel: 'codeburn:addAlias', args: ['--evil', 'safe'] },
+    { name: 'device name that looks like a flag', channel: 'codeburn:removeDevice', args: ['-rf'] },
+    { name: 'relative export path', channel: 'codeburn:exportData', args: ['json', 'all', 'relative/out'] },
+    { name: 'compare model that looks like a flag', channel: 'codeburn:getCompare', args: ['month', 'all', '-a', 'model-b'] },
+    { name: 'price override model that looks like a flag', channel: 'codeburn:setPriceOverride', args: ['-x', { input: 1, output: 2 }] },
+    { name: 'non-positive price override rate', channel: 'codeburn:setPriceOverride', args: ['my-model', { input: 0, output: 2 }] },
+    { name: 'non-finite price override rate', channel: 'codeburn:setPriceOverride', args: ['my-model', { input: 1, output: Number.POSITIVE_INFINITY }] },
+    { name: 'remove price override model that looks like a flag', channel: 'codeburn:removePriceOverride', args: ['--all'] },
+    { name: 'claude config source that looks like a flag', channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, '-rf'] },
+    { name: 'claude config source with shell metacharacters', channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'id; rm -rf'] },
+  ]
+
+  it.each(REJECTIONS)('rejects $name with a bad-args envelope and never spawns', async ({ channel, args }) => {
+    const { spawnCli, spawnCliAction } = fakeSpawn()
+    const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn' }))
+    const res = await handlers[channel]!(...args)
+    expect(res).toMatchObject({ ok: false, error: { kind: 'bad-args' } })
+    expect(spawnCli).not.toHaveBeenCalled()
+    expect(spawnCliAction).not.toHaveBeenCalled()
+  })
+
+  it('still accepts the valid values those cases mutate', async () => {
+    const { spawnCli, spawnCliAction, calls } = fakeSpawn()
+    const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn' }))
+    await handlers['codeburn:exportData']!('json', 'all', '/tmp/out')
+    expect(calls[0]).toEqual(['export', '-f', 'json', '-o', '/tmp/out', '--provider', 'all'])
+  })
+})
+
+describe('createBridgeHandlers (quota force + redaction)', () => {
+  it('threads the renderer force flag into getQuota', async () => {
+    const base = { spawnCli: vi.fn(), spawnCliAction: vi.fn(), resolveCodeburnPath: () => null }
+    const getQuota = vi.fn(async () => [])
+    const handlers = createBridgeHandlers({ ...base, getQuota })
+    await handlers['codeburn:getQuota']!(true)
+    expect(getQuota).toHaveBeenLastCalledWith({ force: true })
+    await handlers['codeburn:getQuota']!()
+    expect(getQuota).toHaveBeenLastCalledWith({ force: false })
+  })
+
+  it('redacts secrets in ActionResult.stderr before it crosses IPC', async () => {
+    const spawnCliAction = vi.fn(async () => ({ ok: false, stdout: '', stderr: 'auth failed: Bearer sk-ant-leak12345', code: 1 }))
+    const handlers = createBridgeHandlers({ spawnCli: vi.fn(), spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn', getQuota: vi.fn(async () => []) })
+    const res = await handlers['codeburn:setCurrency']!('EUR') as { ok: true; value: { stderr: string } }
+    expect(res.ok).toBe(true)
+    expect(res.value.stderr).not.toMatch(/sk-ant-leak|Bearer sk-ant/)
+    expect(res.value.stderr).toContain('[REDACTED]')
+  })
+})
+
+describe('createApplicationMenuTemplate', () => {
+  it('keeps normal app roles while leaving CmdOrCtrl+R for renderer refresh', () => {
+    const items = flattenMenuItems(createApplicationMenuTemplate(false))
+    const roles = items.map(item => item.role).filter(Boolean)
+    const accelerators = items.map(item => item.accelerator).filter(Boolean)
+
+    expect(roles).toContain('copy')
+    expect(roles).toContain('paste')
+    expect(roles).toContain('quit')
+    expect(roles).toContain('minimize')
+    expect(roles).toContain('close')
+    expect(roles).not.toContain('reload')
+    expect(roles).not.toContain('forceReload')
+    expect(accelerators).not.toContain('CmdOrCtrl+R')
+    expect(accelerators).not.toContain('CommandOrControl+R')
+  })
+
+  it('keeps DevTools available in dev without adding reload menu items', () => {
+    const roles = flattenMenuItems(createApplicationMenuTemplate(true)).map(item => item.role).filter(Boolean)
+
+    expect(roles).toContain('toggleDevTools')
+    expect(roles).not.toContain('reload')
+    expect(roles).not.toContain('forceReload')
+  })
+})
