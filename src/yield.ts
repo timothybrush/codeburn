@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process'
+import { realpathSync } from 'fs'
+import { resolve } from 'path'
 import { parseAllSessions } from './parser.js'
 import type { DateRange, SessionSummary } from './types.js'
 
@@ -60,8 +62,59 @@ function runGit(args: string[], cwd: string): string | null {
   }
 }
 
-function isGitRepo(dir: string): boolean {
-  return runGit(['rev-parse', '--is-inside-work-tree'], dir) === 'true'
+type RepoIdentity = {
+  /** Canonical group key: the absolute git-common-dir (shared object store). */
+  readonly key: string
+  /** A member directory to run `git log` from; --all spans the whole store. */
+  readonly gitDir: string
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
+/**
+ * Resolve a directory to its canonical repository identity, or null when it is
+ * not inside a git work tree.
+ *
+ * The key is the absolute `git-common-dir` (the shared object store), NOT the
+ * raw path: `git rev-parse --is-inside-work-tree` is true in every subdirectory
+ * and `git log --all` returns the same repo-wide list from any of them, so
+ * keying groups on the raw path would let two monorepo subdirectories — or two
+ * worktrees of one repo — each award the same commit. All subdirectories AND
+ * all worktrees of one repo share this common-dir, so they collapse to a single
+ * group; distinct repositories keep distinct keys.
+ *
+ * Cached per directory: resolution runs once per unique path (many sessions
+ * share a path), never once per session.
+ */
+function resolveRepoIdentity(
+  dir: string,
+  cache: Map<string, RepoIdentity | null>,
+): RepoIdentity | null {
+  const cached = cache.get(dir)
+  if (cached !== undefined) return cached
+
+  let identity: RepoIdentity | null = null
+  // One fork answers both questions; line 1 is --is-inside-work-tree, line 2 the
+  // --git-common-dir (relative to `dir` for a subdir, absolute for a worktree).
+  const out = runGit(['rev-parse', '--is-inside-work-tree', '--git-common-dir'], dir)
+  if (out) {
+    const [insideWorkTree, commonDir] = out.split('\n')
+    if (insideWorkTree === 'true' && commonDir) {
+      // realpath canonicalizes symlinks: git reports a linked worktree's
+      // common-dir as a realpath but the main worktree's as ".git" relative to
+      // its (possibly symlinked) path, so both must be canonicalized to collapse
+      // to one key.
+      identity = { key: canonicalPath(resolve(dir, commonDir)), gitDir: dir }
+    }
+  }
+  cache.set(dir, identity)
+  return identity
 }
 
 function getMainBranch(cwd: string): string {
@@ -252,32 +305,42 @@ export async function computeYield(range: DateRange, cwd: string, provider: stri
     details: [],
   }
 
+  const repoIdentityCache = new Map<string, RepoIdentity | null>()
+
   // Get all commits in the date range for correlation
-  const commits = isGitRepo(cwd)
+  const cwdIdentity = resolveRepoIdentity(cwd, repoIdentityCache)
+  const cwdCommits = cwdIdentity
     ? getCommitsInRange(cwd, range.start, range.end, getMainBranch(cwd))
     : []
 
-  // Group sessions by resolved repo before attributing: every project entry
-  // whose projectPath is missing (or not a git repo) falls back to the same
-  // cwd and shares one commit list, so attribution must run once per repo or
-  // two such entries could each award the same commit to one of their sessions.
+  // Group sessions by canonical repository identity before attributing so that
+  // each commit is awarded at most once across the whole repo. Two monorepo
+  // subdirectory sessions, or two worktrees of one repo, resolve to the same
+  // git-common-dir and share ONE group; keying on the raw path would double
+  // count. A project whose path is missing or not a git repo falls back to the
+  // cwd repo (or, when cwd is not a repo either, an empty commit list) exactly
+  // as before.
   type RepoGroup = { commits: CommitInfo[]; sessions: SessionSummary[]; projectNames: string[] }
   const repoGroups = new Map<string, RepoGroup>()
   for (const project of projects) {
-    const projectCwd = project.projectPath && isGitRepo(project.projectPath)
-      ? project.projectPath
-      : cwd
+    const projectIdentity = project.projectPath
+      ? resolveRepoIdentity(project.projectPath, repoIdentityCache)
+      : null
+    const identity = projectIdentity ?? cwdIdentity
+    const groupKey = identity ? identity.key : cwd
 
-    let group = repoGroups.get(projectCwd)
+    let group = repoGroups.get(groupKey)
     if (!group) {
       group = {
-        commits: projectCwd === cwd
-          ? commits
-          : getCommitsInRange(projectCwd, range.start, range.end, getMainBranch(projectCwd)),
+        commits: !identity
+          ? []
+          : cwdIdentity && identity.key === cwdIdentity.key
+            ? cwdCommits
+            : getCommitsInRange(identity.gitDir, range.start, range.end, getMainBranch(identity.gitDir)),
         sessions: [],
         projectNames: [],
       }
-      repoGroups.set(projectCwd, group)
+      repoGroups.set(groupKey, group)
     }
     for (const session of project.sessions) {
       group.sessions.push(session)
