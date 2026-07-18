@@ -1593,7 +1593,7 @@ async function scanProjectDirs(
 
   type FileInfo = { dirName: string; fp: NonNullable<Awaited<ReturnType<typeof fingerprintFile>>>; source?: SessionSourceMetadata }
   const unchangedFiles: Array<{ filePath: string; dirName: string; source?: SessionSourceMetadata; cached: CachedFile }> = []
-  const changedFiles: Array<{ filePath: string; info: FileInfo }> = []
+  const changedFiles: Array<{ filePath: string; info: FileInfo; append?: { cached: CachedFile; readFromOffset: number } }> = []
 
   const discoverProgress = createScanProgress('scanning claude project dirs', dirs.length)
   let dirsDone = 0
@@ -1607,6 +1607,12 @@ async function scanProjectDirs(
       const action = reconcileFile(fp, section.files[filePath])
       if (action.action === 'unchanged') {
         unchangedFiles.push({ filePath, dirName, source, cached: section.files[filePath]! })
+      } else if (action.action === 'appended') {
+        changedFiles.push({
+          filePath,
+          info: { dirName, fp, source },
+          append: { cached: section.files[filePath]!, readFromOffset: action.readFromOffset },
+        })
       } else {
         changedFiles.push({ filePath, info: { dirName, fp, source } })
       }
@@ -1629,10 +1635,78 @@ async function scanProjectDirs(
   const progressTotal = changedFiles.length
   let filesDone = 0
   emitScanProgress({ kind: 'tick', provider: 'claude', done: 0, total: progressTotal })
-  for (const { filePath, info } of changedFiles) {
+  for (const { filePath, info, append } of changedFiles) {
     delete section.files[filePath]
 
     try {
+      if (append) {
+        // Append-only growth: parse ONLY the bytes past the cached resume offset
+        // and merge with the cached turns, rather than re-reading the file from 0.
+        // On a studio machine where live agents constantly append to session
+        // JSONL, this is the dominant warm-run cost. The merged result is
+        // byte-for-byte identical to a full re-parse (see mergeBoundaryCalls).
+        const tracker = { lastCompleteLineOffset: append.readFromOffset }
+        const newEntries = await parseClaudeEntries(filePath, tracker, append.readFromOffset)
+        const cached = append.cached
+
+        const newTurns = newEntries
+          ? groupIntoTurns(dedupeStreamingMessageIds(newEntries), seenMsgIds).map(parsedTurnToCachedTurn)
+          : []
+
+        const mergedTurns: CachedTurn[] = cached.turns.map(t => ({ ...t, calls: [...t.calls] }))
+        if (newTurns.length > 0) {
+          let startIdx = 0
+          // A first new turn with no leading user message is a continuation of
+          // the last cached turn — merge its calls in (a full re-parse would put
+          // them in that same turn), then append the remaining new turns.
+          if (!newTurns[0]!.userMessage.trim() && mergedTurns.length > 0) {
+            const last = mergedTurns[mergedTurns.length - 1]!
+            last.calls = mergeBoundaryCalls(last.calls, newTurns[0]!.calls)
+            startIdx = 1
+          }
+          for (let i = startIdx; i < newTurns.length; i++) mergedTurns.push(newTurns[i]!)
+        }
+
+        // The cached region's dedup keys were not added to seenMsgIds (only
+        // unchanged files pre-seed it), so add them now — a full re-parse would
+        // have, and later files dedup cross-file against them.
+        for (const t of cached.turns) for (const c of t.calls) seenMsgIds.add(c.deduplicationKey)
+
+        // First-cwd wins, and the first cwd lives in the cached region whenever
+        // one was resolved there; only re-derive if the cached region had none.
+        let canonicalCwd = cached.canonicalCwd
+        let canonicalProjectName = cached.canonicalProjectName
+        if (canonicalCwd === undefined && newEntries) {
+          const cwd = extractCanonicalCwd(newEntries)
+          const canonical = (cwd && !isCoworkSession(cwd, filePath)) ? await resolveCanonicalProjectPath(cwd) : undefined
+          canonicalCwd = canonical?.path
+          canonicalProjectName = canonical?.isWorktree ? projectNameFromPath(canonical.path, info.dirName) : undefined
+        }
+
+        // Inventory is a sorted set union; cached (older entries) ∪ new = full.
+        const mcpInventory = newEntries
+          ? Array.from(new Set([...cached.mcpInventory, ...extractMcpInventory(newEntries)])).sort()
+          : cached.mcpInventory
+
+        section.files[filePath] = {
+          fingerprint: info.fp,
+          lastCompleteLineOffset: tracker.lastCompleteLineOffset,
+          canonicalCwd,
+          canonicalProjectName,
+          mcpInventory,
+          turns: mergedTurns,
+          agentType: cached.agentType,
+        }
+        ;(diskCache as { _dirty?: boolean })._dirty = true
+        filesDone++
+        await parseProgress.tick(filesDone)
+        if (filesDone % 50 === 0 || filesDone === progressTotal) {
+          emitScanProgress({ kind: 'tick', provider: 'claude', done: filesDone, total: progressTotal })
+        }
+        if (onFileParsed) await onFileParsed()
+        continue
+      }
+
       const tracker = { lastCompleteLineOffset: 0 }
       const entries = await parseClaudeEntries(filePath, tracker)
       if (!entries) { filesDone++; await parseProgress.tick(filesDone); continue }
@@ -1968,15 +2042,52 @@ function cachedTurnToClassified(turn: CachedTurn): ClassifiedTurn {
 
 // ── Cache-Aware Parsing Helpers ────────────────────────────────────────
 
+// Merge the calls of the last cached turn with the calls parsed from the
+// appended region when the appended region continues that turn (its first new
+// content had no leading user message). This mirrors `dedupeStreamingMessageIds`
+// at the call level: a Claude message re-emitted across the append boundary
+// (same `msg.id`, or the trailing not-yet-newline-terminated line re-read from
+// the resume offset) collapses to its LAST occurrence, keeping the FIRST
+// occurrence's timestamp — byte-for-byte what a full re-parse of the combined
+// stream produces. Synthetic `claude:<ts>` keys (id-less entries) are never
+// collapsed, matching `getMessageId` returning null for them.
+function mergeBoundaryCalls(cachedCalls: CachedCall[], newCalls: CachedCall[]): CachedCall[] {
+  const combined = [...cachedCalls, ...newCalls]
+  const firstIdx = new Map<string, number>()
+  const lastIdx = new Map<string, number>()
+  for (let i = 0; i < combined.length; i++) {
+    const key = combined[i]!.deduplicationKey
+    if (key.startsWith('claude:')) continue
+    if (!firstIdx.has(key)) firstIdx.set(key, i)
+    lastIdx.set(key, i)
+  }
+  if (lastIdx.size === 0) return combined
+  const result: CachedCall[] = []
+  for (let i = 0; i < combined.length; i++) {
+    const call = combined[i]!
+    const key = call.deduplicationKey
+    if (key.startsWith('claude:')) { result.push(call); continue }
+    if (lastIdx.get(key) !== i) continue
+    if (firstIdx.get(key) !== i) {
+      result.push({ ...call, timestamp: combined[firstIdx.get(key)!]!.timestamp })
+      continue
+    }
+    result.push(call)
+  }
+  return result
+}
+
 async function parseClaudeEntries(
   filePath: string,
   tracker: { lastCompleteLineOffset: number },
+  startByteOffset?: number,
 ): Promise<JournalEntry[] | null> {
   const entries: JournalEntry[] = []
   let hasLines = false
   for await (const line of readSessionLines(filePath, undefined, {
     largeLineAsBuffer: true,
     byteOffsetTracker: tracker,
+    ...(startByteOffset !== undefined ? { startByteOffset } : {}),
   })) {
     hasLines = true
     const entry = parseJsonlLine(line)
