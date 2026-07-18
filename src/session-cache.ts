@@ -435,6 +435,10 @@ export function reconcileFile(
 
   if (
     cached.lastCompleteLineOffset !== undefined &&
+    // Defensive: never resume past the file's current end. A truncate-then-regrow
+    // can leave the cached offset stranded beyond live bytes; reading from there
+    // would silently drop the appended tail, so fall back to a full re-parse.
+    cached.lastCompleteLineOffset <= current.sizeBytes &&
     fp.dev === current.dev &&
     fp.ino === current.ino &&
     current.sizeBytes > fp.sizeBytes
