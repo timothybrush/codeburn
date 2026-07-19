@@ -129,6 +129,7 @@ export const PROVIDER_ENV_VARS: Record<string, string[]> = {
   qwen: ['QWEN_DATA_DIR'],
   'ibm-bob': ['XDG_CONFIG_HOME'],
   quickdesk: ['QUICKWORK_HOME'],
+  kimicode: ['KIMI_CODE_HOME'],
 }
 
 // Names of providers whose cache entries are never evicted when source files
@@ -159,6 +160,7 @@ export const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   'ibm-bob': 'worktree-project-grouping-v1',
   kiro: 'ide-parsing-v1-est-cost',
   quickdesk: 'emf-sqlite-v2-est-cost',
+  kimicode: 'wire-usage-v1-est-cost',
   'kilo-code': 'worktree-project-grouping-v1',
   'roo-code': 'worktree-project-grouping-v1',
   warp: 'worktree-project-grouping-v1-est-cost',
