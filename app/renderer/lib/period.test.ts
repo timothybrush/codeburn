@@ -31,6 +31,20 @@ const DAILY = [
   entry('2026-07-11'),
 ]
 
+// All active-day entries at or before NOW's calendar day (the future 07-11 entry
+// is always excluded). Reused by the widest windows ('all', 'lifetime').
+const ALL_ACTIVE_THROUGH_NOW = [
+  '2026-05-31',
+  '2026-06-01',
+  '2026-06-10',
+  '2026-06-11',
+  '2026-07-01',
+  '2026-07-03',
+  '2026-07-04',
+  '2026-07-09',
+  '2026-07-10',
+]
+
 describe('sliceDailyToPeriod', () => {
   it.each<[Period, string[]]>([
     ['today', ['2026-07-10']],
@@ -38,32 +52,26 @@ describe('sliceDailyToPeriod', () => {
     ['week', ['2026-07-03', '2026-07-04', '2026-07-09', '2026-07-10']],
     ['30days', ['2026-06-10', '2026-06-11', '2026-07-01', '2026-07-03', '2026-07-04', '2026-07-09', '2026-07-10']],
     ['month', ['2026-07-01', '2026-07-03', '2026-07-04', '2026-07-09', '2026-07-10']],
-    [
-      'all',
-      [
-        '2026-05-31',
-        '2026-06-01',
-        '2026-06-10',
-        '2026-06-11',
-        '2026-07-01',
-        '2026-07-03',
-        '2026-07-04',
-        '2026-07-09',
-        '2026-07-10',
-      ],
-    ],
+    ['all', ALL_ACTIVE_THROUGH_NOW],
+    // lifetime is unbounded below (1970), so it holds every active day up to today.
+    ['lifetime', ALL_ACTIVE_THROUGH_NOW],
   ])('returns only in-window entries for %s', (period, expectedDates) => {
     expect(sliceDailyToPeriod(DAILY, period, NOW).map(day => day.date)).toEqual(expectedDates)
   })
 })
 
-describe('periodWindowStart', () => {
+// Parity fixture: the inclusive window-start each period must produce, computed
+// exactly as src/cli-date.ts getDateRange() does for the same NOW. If cli-date
+// shifts a boundary, this table must move with it or the client will drift.
+describe('periodWindowStart matches src/cli-date.ts getDateRange', () => {
+  // NOW = 2026-07-10. Values below are the local date-key of getDateRange().range.start.
   it.each<[Period, string]>([
-    ['today', '2026-07-10'],
-    ['week', '2026-07-03'],
-    ['30days', '2026-06-10'],
-    ['month', '2026-07-01'],
-    ['all', '2026-01-01'],
+    ['today', '2026-07-10'], // new Date(y, m, d)
+    ['week', '2026-07-03'], // new Date(y, m, d - 7)
+    ['30days', '2026-06-10'], // new Date(y, m, d - 30)
+    ['month', '2026-07-01'], // new Date(y, m, 1)
+    ['all', '2026-01-01'], // new Date(y, m - 6, 1)
+    ['lifetime', '1970-01-01'], // new Date(1970, 0, 1)
   ])('aligns %s to the CLI window start', (period, expected) => {
     expect(periodWindowStart(period, NOW)).toBe(expected)
   })

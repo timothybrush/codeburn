@@ -4,7 +4,7 @@
 
 // ————— Period + IPC error contract —————
 
-export type Period = 'today' | 'week' | '30days' | 'month' | 'all'
+export type Period = 'today' | 'week' | '30days' | 'month' | 'all' | 'lifetime'
 
 export type DateRange = { from: string; to: string }
 
