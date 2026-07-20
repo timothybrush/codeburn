@@ -25,6 +25,9 @@ export function periodWindowStart(period: Period, now = new Date()): string {
       return localDateKey(new Date(now.getFullYear(), now.getMonth(), 1))
     case 'all':
       return localDateKey(new Date(now.getFullYear(), now.getMonth() - ALL_TIME_MONTHS, 1))
+    case 'lifetime':
+      // src/cli-date.ts anchors the unbounded window at 1970-01-01.
+      return localDateKey(new Date(1970, 0, 1))
   }
 }
 
